@@ -1,8 +1,9 @@
 # Workflow 编排 — 「agent 铺轨,引擎行车」设计方案
 
-> Status: Draft (设计阶段,未动工)
+> Status: Draft(M0 实现已在独立分支动工,分支待统一)
 > Owner: TBD
 > Last updated: 2026-07-11
+> Rev 3: 吸收外部 review 意见——四层账本模型、执行者×控制结构正交拆分、program v1 受控能力、依赖完成语义显式化、指标质量护栏、M1 改为三执行者纵切。
 
 ## TL;DR
 
@@ -10,10 +11,11 @@
 - **三元执行者模型**:执行者有三种——**人**(判断力最强、最贵)、**agent**(判断力可及、概率性、中等成本)、**程序**(零判断力、零边际成本、100% 可靠)。系统的本质是让工作沿"人 → agent → 程序"的阶梯持续下沉:例外沿阶梯向上找更贵的判断力,确定性沿阶梯向下沉淀为更便宜的执行。
 - **问题**:multica 今天组织复杂多 agent 流程的唯一方式是 squad leader + prompt 约定(backlog 停车、手动 promote、child-done comment 唤醒)。流转没有引擎保证、每一跳都付一次完整 LLM 调用、流程不可声明/复用/审计。
 - **方案**:引入 Workflow 编排层,定位介于 Dify(纯静态图)和 Claude Code dynamic workflow(纯动态)之间——**planning 动态(LLM 决定建什么节点),transition 确定(节点间流转由引擎执行)**。
-- **架构关键**:不建与 issue 平行的 run log 体系。**每个 workflow 节点 = 一个 issue,节点执行 = 现有 task queue,可观测性全部长在 issue 上**。引擎的角色是"issue 树的编译器 + 状态机监督者"。
+- **一句话定性**:**Issue-native 的判断力编译系统,而不是 Issue-only 的 Agent 工作流系统。**
+- **架构关键**:不建第二套**用户可见**的工作系统,但保留最小、不可绕过的引擎账本。Issue 是唯一的用户协作界面,`workflow_run` / `workflow_node_run` 是唯一的引擎执行账本,issue 状态只是运行状态的**产品投影**。引擎的角色是"issue 树的编译器 + 状态机监督者"。
 - **激活休眠资产**:`issue_dependency` 表(migration 001 就存在,至今无任何 query/service 使用)作为运行时 DAG 边存储。
 - **两种流转控制**:`gateway`(CEL 表达式,零 LLM 成本,确定性)对应工程控制;`agent_gateway`(LLM 路由决策,但引擎强制 schema + default 分支 + 超时 fallback)对应 prompt 控制。
-- **北极星指标**:每次 run 的人工介入次数;长期看**单位工作的判断力成本**(LLM 调用占比持续下降,token 支出迁移为 CPU 支出)。
+- **北极星指标**:**单位合格产出的判断力成本**——不是裸的"介入次数"(单看它会鼓励系统隐藏异常),而是配套质量护栏(验收成功率、返工率、Eject 率)的成本指标。
 - **出场顺序修正(见 §7)**:先以"规则自动化"形态发布最小能力(依赖全 done 自动 promote 等单条规则),可选用"智能看板列"做第一层产品皮,显式 DAG 图后置——让图从规则的组合使用中长出来,而不是先建画布。
 - **改动量**:总计约 13–18 人周,分 M0–M3 四期,M0/M1 之间有止损点。
 - **最大风险**:① issue 状态副作用分散在至少三条写路径,引擎挂不全会静默卡死——M0 必须先收敛到 service 单一入口;② 进程内 event bus + 多实例部署,引擎推进必须完全靠 DB 幂等,不能依赖事件必达。
@@ -49,10 +51,18 @@
 
 Agent 在这个图景里不是终点,是**中间体**:既是人的替身(向上),也是程序的孵化器(向下)。引擎的职责是把每一步路由到能胜任的最便宜一层。
 
-### 0.3 北极星指标
+### 0.3 北极星指标:单位合格产出的判断力成本
 
-- **短期**:每次 run 的人工介入次数、无人值守完成率、失败到人接手的时长。从 M1 起埋点。
-- **长期**:**单位工作的判断力成本**——成熟 workflow 的健康趋势是人介入次数 → 0、LLM 调用占比持续下降、token 支出迁移为 CPU 支出。剧本详情页直接画这条曲线("三个月里每次 run 成本从 $2.1 降到 $0.3"),这是流程资产复利的可视化证据。
+核心指标是**单位合格产出的判断力成本**。注意"合格"二字:单看"每次 run 人工介入次数"有经典的 Goodhart 风险——它会鼓励系统隐藏异常、把该升级的事静默吞掉。介入次数必须与结果质量护栏配套观测:
+
+- **无人工介入且验收成功**的 run 比例(不是裸的无介入率);
+- 每个 accepted outcome 的总成本(token + 人时);
+- 完成后返工率;
+- Eject / 强制接管率;
+- 异常发现到恢复的时长;
+- agent 节点向 program 节点的迁移比例(阶梯下沉速度)。
+
+全部从 M1 起埋点。成熟 workflow 的健康趋势:介入次数 → 0 **且**验收成功率不降、LLM 调用占比持续下降、token 支出迁移为 CPU 支出。剧本详情页直接画这条曲线("三个月里每次合格 run 的成本从 $2.1 降到 $0.3"),这是流程资产复利的可视化证据。
 
 ### 0.4 三条设计推论
 
@@ -97,9 +107,25 @@ Agent 在这个图景里不是终点,是**中间体**:既是人的替身(向上)
 
 ## 2. 设计方案
 
-### 2.1 核心哲学:workflow 建在 issue 图之上,不建平行体系
+### 2.1 核心哲学:Issue-native,而非 Issue-only
 
-不照抄 Dify 搞独立的 workflow run/node log 实体。multica 的全部可观测面(issue 树 UI、timeline、comment、inbox、PR 联动)都长在 issue 上——**每个节点就是一个 issue,节点执行就是现有 task queue,人工介入就是现有 comment/status**。否则出现两套真相(run log vs issue 状态),这正是 Dify 用在工程团队里最难受的地方。
+一句话:**不建第二套用户可见的工作系统,但保留最小、不可绕过的引擎账本。**
+
+精确的四层模型:
+
+| 层 | 载体 | 职责 |
+|---|---|---|
+| 用户协作界面 | **Issue**(唯一) | 评论、负责人、inbox、PR 联动、人工接手——全部复用现有协作面 |
+| 引擎执行账本 | `workflow_run` / `workflow_node_run`(唯一) | 暂停、重试、跳过、等待、循环计数、失败转人工、Eject——完整运行状态机 |
+| 执行尝试 | `agent_task_queue` | 某个节点的某一次执行 |
+| 产品投影 | Issue 状态 / banner | 运行状态的**投影**,不是运行状态机本身 |
+
+两条对称的纪律:
+
+1. **运行状态永不塞进 issue。** 暂停/循环次数/跳过标记等如果没有账本,几年后一定会被硬塞进 issue status 和 metadata,长出一套隐形 run 状态机——这正是要避免的腐化路径。
+2. **账本永不长出用户可见 UI。** 所有界面从 issue 投影;`node_run` 只对引擎和调试可见,防止它反向膨胀成第二产品面(Dify 的 run log 之所以难受,不是因为它存在,而是因为用户必须住在里面)。
+
+multica 的全部可观测面(issue 树 UI、timeline、comment、inbox、PR 联动)都长在 issue 上——**每个 Work Step 就是一个 issue,执行就是现有 task queue,人工介入就是现有 comment/status**。
 
 ### 2.2 定位:Dify 与 Claude Code 之间的 hybrid
 
@@ -123,47 +149,66 @@ workflow_node_run  (id, run_id, node_key, issue_id, task_id,
 
 所有新表带 `workspace_id` 并在每条查询过滤(多租户硬规则)。
 
-### 2.4 Graph DSL:节点类型钉死 7 种,不做 BPMN
+### 2.4 Graph 模型:执行者 × 控制结构正交,不做 BPMN
 
-`agent` / `agent_gateway` / `gateway` / `human` / `program` / `trigger` / `subworkflow`。示例:
+图上只有两类元素,分别承载两个独立的维度:
+
+```text
+Work Step(干活的)
+  executor = human | agent | program     # 可替换,图结构不变
+
+Control Node(决定流转的)
+  kind = gateway | join | wait | trigger | subworkflow
+```
+
+**不把执行者和控制结构混成一堆 node type**,原因有二:① "毕业"(agent 步骤沉淀为 program 步骤,见 §3.10)只需替换 `executor` 字段,不动图结构;② 人/agent/程序的同构(§3.6 随时换执行者)在模型层真正成立,而不是靠 UI 假装。`agent_gateway` 保留为**面向用户的 DSL 语法糖**(用户心智里"审查并路由"是一个动作),底层展开为 `gateway + 一个 executor=agent 的 Work Step`。
+
+示例:
 
 ```yaml
-name: feature-delivery
-nodes:
-  plan:      { type: agent, assignee: "@architect", output_schema: { subtasks: array } }
-  implement: { type: agent, assignee: "@coder",
-               prompt: "按 {{nodes.plan.output.subtasks}} 实现", retry: {max: 2} }
-  wait_ci:   { type: program, action: wait_for_event,        # 程序节点:确定性等待
-               event: "pr.checks_completed" }
-  gate_ci:   { type: gateway,                                # 工程控制的流转
-               when: 'pr.checks_conclusion == "passed"',
-               on_true: review, on_false: fix }
-  review:    { type: agent_gateway, assignee: "@reviewer",   # prompt 控制的流转
-               output_schema: { verdict: enum[approve, revise, escalate] },
-               routes: { approve: notify, revise: implement, escalate: human_review },
-               default: human_review }              # enum 漂移降级,不崩
-  human_review: { type: human, assignee_role: admin }        # inbox 审批卡
-  notify:    { type: program, action: builtin,               # 程序节点:内置动作
-               do: lark_notify, args: { channel: "releases" },
-               on_failure: { fallback_agent: "@fixer" } }    # 兜底 agent
+name: release
+steps:                                   # Work Step:executor 可替换
+  wait_ci: { executor: program, action: wait_for_event, event: "pr.checks_completed" }
+  analyze: { executor: agent, assignee: "@architect",
+             prompt: "分析 CI 结果,起草发布说明",
+             output_schema: { verdict: enum[ready, fix_needed], notes: string },
+             retry: { max: 2 } }
+  approve: { executor: human, assignee_role: admin }        # inbox 审批卡
+  ship:    { executor: program, action: builtin, do: create_tag,
+             on_failure: { fallback_agent: "@fixer" } }     # 兜底 agent
+controls:                                # Control Node:只决定流转
+  gate:    { kind: gateway, on: analyze.output.verdict,
+             routes: { ready: approve, fix_needed: analyze },
+             default: approve }                             # enum 漂移降级,不崩
 edges:
-  - plan -> implement
-  - implement -> wait_ci
+  - wait_ci -> analyze -> gate
+  - approve -> ship
 policies: { loop_max: 3, run_deadline: 48h }
 ```
 
-**执行者的三种控制方式:**
+**流转的两种控制方式:**
 
-- **工程控制** = `gateway` + `program`:gateway 是 CEL/JSONLogic 表达式路由,输入是上游节点 structured output、issue metadata、PR 状态(`state`/`checks_conclusion` 链路现成),零 LLM 成本、毫秒级、确定性。UI 上不暴露表达式语言,呈现为"当 review 的 verdict = approve 时"的下拉选择。
-- **prompt 控制** = `agent_gateway`:路由决策交给一次 LLM 调用(可指定小模型),但引擎强制 output schema、强制 `default` 分支、强制超时 fallback——**决策可以不确定,流转本身必须确定**(与"enum drift downgrades, not crashes"同一精神)。
+- **工程控制** = `gateway`(CEL/JSONLogic 表达式路由,输入是上游 structured output、issue metadata、PR 状态,零 LLM 成本、毫秒级、确定性;UI 不暴露表达式,呈现为"当 analyze 的 verdict = ready 时"的下拉选择)。
+- **prompt 控制** = `agent_gateway` 语法糖(路由决策交给一次 LLM 调用,可指定小模型,但引擎强制 output schema、强制 `default` 分支、强制超时 fallback)——**决策可以不确定,流转本身必须确定**。
 
-**`program` 节点(三元执行者的第三层)**,初期三个子类:
+**依赖完成语义必须显式声明**(join/edge 的属性,默认 `all_succeeded`):
 
-1. **命令/脚本**:在指定 runtime 上跑固定命令,不经过 LLM——daemon runtime 本来就在用户机器上执行任务,这是现成基础设施的子集;
-2. **内置动作**:建 issue、改状态、写 metadata、发 Lark 通知、调 webhook——全部是已有 API 的封装;
-3. **等待事件**:等 PR merge、等 CI 结束、等定时——workflow 里大量"步骤"只是确定性等待,今天要么人盯、要么浪费一次 agent 唤醒。GitHub webhook 和事件总线现成。
+- `all_succeeded` — 全部上游成功(默认);
+- `all_terminal` — 全部上游到达终态(含失败/取消);
+- `any_succeeded` — 任一上游成功;
+- `on_failure` / `on_cancel` — 显式的失败/取消分支。
 
-程序节点标配 **兜底 agent 开关**(`on_failure.fallback_agent`,默认开):失败时先让 agent 拿着报错和上下文试一次,agent 也搞不定才升级到人——运行时升级链(§0.2 链一)的落地。
+关键规则:**上游取消或失败,默认不视为满足**——下游进入"需处置"状态或升级给 agent/人,而不是拿着缺失的输出继续跑。比起"避免静默卡住",更危险的是"静默带病推进"。这条语义是三元阶梯在引擎层的第一次真实落地,M0 就必须钉死。
+
+**`program` 执行者,v1 只支持受控能力**(不支持任意脚本):
+
+1. **注册过的内置动作**:建 issue、改状态、写 metadata、发 Lark 通知、打 tag——已有 API 的封装;
+2. **带 schema 的工具/API 调用**:声明输入输出结构、权限与 secret scope;
+3. **等待事件**:等 PR merge、等 CI 结束、等定时——workflow 里大量"步骤"只是确定性等待,今天要么人盯、要么浪费一次 agent 唤醒。
+
+所有 program 步骤强制:结构化输入输出、超时、幂等键、明确的权限/secret scope。"agent 写脚本"的任意执行能力只通过毕业管线(§3.10)引入,不在 v1 的直接配置面里。
+
+程序步骤标配 **兜底 agent 开关**(`on_failure.fallback_agent`,默认开):失败时先让 agent 拿着报错和上下文试一次,agent 也搞不定才升级到人——运行时升级链(§0.2 链一)的落地。
 
 **executor 可迁移**:同一个 step 的执行者可在 人/agent/程序 之间切换而图结构不变。step 详情页展示它当前在阶梯的哪一层,以及升/降级信号(见 §3.10 毕业机制)。
 
@@ -293,7 +338,7 @@ Run 主视图 = 根 issue 详情页 + 顶部 Run Banner:
 **支柱三:数据回流——每次介入都是流程改进信号**
 
 7. **介入原因一键采集 + 流程健康热力图**:每次打回/接管/重试弹一秒钟能完成的选择(产出质量/理解偏差/环境问题/其他+一句话);剧本详情页聚合成节点热力图——哪步最烧人、原因分布、趋势。改进有靶子。
-8. **毕业机制(阶梯下沉的产品化)⭐**:系统检测到 agent 步骤连续 N 次操作序列/产出模式稳定 → 提示"可固化为脚本(预计每次省 ~40k token / 3 分钟),**让这个 agent 自己把脚本写出来?**" agent 起草脚本+验收测试,人 review 一次,节点降级为程序节点。反向的固化建议同理:相似 issue 链条第 N 次出现 → 提示存成剧本。**不指望用户主动设计流程,让产品收割重复。**
+8. **毕业机制(阶梯下沉的产品化)⭐**:agent 步骤连续 N 次操作序列/产出模式稳定,只触发**毕业候选**——连续成功不能直接证明程序可替代 agent。候选进入毕业管线:① 从历史成功 run 生成 replay fixture;② 自动生成 contract test;③ shadow mode 与 agent 结果对比;④ 人 review;⑤ 上线后保留 agent fallback 与一键回滚。管线按节点风险分级:有外部副作用的节点(部署、发通知)走全管线;纯读取/转换节点可缩短为 fixture + contract test + review(shadow mode 意味着双份执行,按风险付费)。产品文案:"可固化为脚本(预计每次省 ~40k token / 3 分钟),**让这个 agent 自己把脚本写出来?**" 反向的固化建议同理:相似 issue 链条第 N 次出现 → 提示存成剧本。**不指望用户主动设计流程,让产品收割重复。**
 9. **委托度量周报**:本周 agent 完成多少 issue、无人值守完成率、人均被打断次数、环比。让"省注意力"可见(留存根基),倒逼指标从第一天采集。
 
 **优先级**:P0 = ①④⑥(没有它们,"敢委托""少介入"不成立);P1 = ②⑤⑦(决定全自动能不能真开、例外贵不贵);P2 = ③⑧⑨(飞轮与留存,依赖数据积累)。
@@ -311,7 +356,7 @@ Run 主视图 = 根 issue 详情页 + 顶部 Run Banner:
 | **M2** | 创建器 + 审批 + 干预 + autopilot 集成 | ~2000 行 | ~3000–4000 行 | 5–7 人周 |
 | **M3** | 动态铺轨 + 固化 + 统计 | ~1500 行 | ~1500 行 | 3–4 人周 |
 
-\* 含测试(本仓库 Go 侧测试普遍是实现的 1–2 倍行数,已计入)。总计 **13–18 人周**。M0 独立有价值,M0/M1 之间是止损点。程序节点/毕业机制等 §3.10 增强未计入,按 P0–P2 优先级另行排期。
+\* 含测试(本仓库 Go 侧测试普遍是实现的 1–2 倍行数,已计入)。总计 **13–18 人周**。M0 独立有价值,M0/M1 之间是止损点。M1 纵切所需的最小程序执行者(两个内置动作)计入 M1;毕业管线等 §3.10 增强未计入,按 P0–P2 优先级另行排期。
 
 ### 4.2 后端模块
 
@@ -366,7 +411,7 @@ workflow 字段进入 issue 响应;#2143/#2147/#2192 三次事故都在这。对
 - dependency 成环 → 节点永远 backlog。对策:建边时 DB 内 DFS 拒环 + reconcile 检测"run 活着但无可推进节点"报警。
 - 根 issue 删除/cancel、agent archive、squad 删除 → run 悬空。每个引用定义级联行为(建议统一降级为 eject)。
 - planner 铺轨 + 循环 = token 放大器。loop 上限、run deadline、spawn-node 配额必须在引擎里,不留给 prompt 自律。
-- 程序节点执行任意命令 → 权限边界:命令白名单/runtime 归属校验,复用 agent 任务的 runtime 权限模型。
+- 程序步骤权限边界:v1 不支持任意脚本,只允许注册过的内置动作 / 带 schema 的工具调用 / 事件等待,强制 secret scope、超时与幂等键;任意执行能力只经毕业管线(fixture → contract test → shadow → review → fallback+回滚)引入。
 
 ### 🟡 R6 其余清单
 
@@ -384,16 +429,22 @@ workflow 字段进入 issue 响应;#2143/#2147/#2192 三次事故都在这。对
 
 结合 §7 的备选方案分析,推荐的出场顺序不是"先建完整 workflow 产品",而是:
 
-1. **M0(现在就可动工,约 2 人周)**:① 状态变更收敛到 service 单一入口(R1);② 激活 `issue_dependency`——"backlog 状态的 agent-assigned issue,依赖全部 done 时自动 promote 为 todo"。**不新增任何用户可见概念**,但"工程控制流转"的最小形态已经存在:串行链和 join 由服务端保证,不再靠 prompt 自觉。这也是方案 D(规则自动化)的第一条规则。
-2. **M1(约 3–4 人周)**:最小 run 闭环——从 issue 发起 run、Run Banner(步骤条)、失败转人工、静默超时。**不做创建器、不做 DSL、不做画布**,前 3 个剧本手写 JSON 硬编码为内置模板。然后用团队自己的一条真实高频流程(发版或 bug 分诊)dogfood 一个月,只盯一个数:**每次 run 的人工介入次数**。
-3. **M2 起由 dogfood 数据决定投资方向**:介入多因"不知道出事/处理例外太累" → 优先值班台+接手包+自治等级(§3.10 支柱二);介入少但发现大量 agent 步骤在重复做确定性的事 → 优先程序节点+毕业机制(三元阶梯)。
+1. **M0(现在就可动工,约 2 人周)**:① 状态变更收敛到 service 单一入口(R1);② 激活 `issue_dependency`,并**把成功/失败/取消后的传播语义钉死**(§2.4:默认 `all_succeeded`;上游失败/取消 → 下游进"需处置"状态,不视为满足);③ 用数据库条件更新 + reconcile 保证幂等(R2)。**不新增任何用户可见概念**,但"工程控制流转"的最小形态已经存在:串行链和 join 由服务端保证,不再靠 prompt 自觉。这也是方案 D(规则自动化)的第一条规则。
+2. **M1(约 3–4 人周)**:不做"多个 agent issue 串起来"的宽切面——那只能验证 DAG 引擎,验证不了本方案真正的赌注(三元阶梯)。改做**一条包含全部三种执行者的真实纵切**,直接 dogfood 发版流程:
+
+   ```text
+   程序:等待 CI 事件 → agent:分析失败/起草发布说明 → 人:inbox 审批 → 程序:打 tag/发通知
+   ```
+
+   配套最小外围:从 issue 发起 run、Run Banner(步骤条)、失败转人工、静默超时;program 执行者只做两个内置动作(等待 CI 事件、打 tag/通知)。**不做创建器、不做 DSL 编辑、不做画布**,剧本手写 JSON 硬编码为内置模板。一条纵切同时验证:三种执行者能否真正互换、join/retry/escalate 是否可靠、issue 投影与运行账本是否清晰、介入是否真的减少、程序步骤是否确实降本。跑一个月,盯 §0.3 的指标组。
+3. **M2 起由 dogfood 数据决定投资方向**:介入多因"不知道出事/处理例外太累" → 优先值班台+接手包+自治等级(§3.10 支柱二);介入少但发现大量 agent 步骤在重复做确定性的事 → 优先扩充程序动作+毕业机制(三元阶梯)。
 
 ### 6.2 分期表
 
 | 阶段 | 交付动线 | 内容 |
 |---|---|---|
-| **M0** | (无 UI) | 状态收敛 + dependency 自动 promote,验证引擎地基,squad leader 立即受益 |
-| **M1** | B3 + C | "Run workflow on this issue" + 顺序/并行/join + Run Banner + 失败转人工 + 静默超时;内置模板,无创建器 |
+| **M0** | (无 UI) | 状态收敛 + dependency 自动 promote(含显式完成语义)+ DB 幂等,验证引擎地基,squad leader 立即受益 |
+| **M1** | B3 + C | 三执行者纵切(发版流程:程序等 CI → agent 分析 → 人审批 → 程序执行)+ Run Banner + 失败转人工 + 静默超时;内置模板,无创建器 |
 | **M2** | A + D + E(+ §3.10 P0/P1 按数据取舍) | Describe-to-workflow 创建器、human 卡点 + inbox 审批、重试/跳过/Eject、autopilot `run_workflow`、自治等级、值班台 |
 | **M3** | F + G(+ §3.10 P2) | planner step 动态铺轨、Save as workflow 固化、程序节点毕业机制、成本/成功率统计、委托周报 |
 
@@ -451,10 +502,14 @@ Workflow 与 issue 平行,自己的画布、自己的 run 记录页;节点调用
 
 ## 8. 总结
 
+一句话定性:**Issue-native 的判断力编译系统,而不是 Issue-only 的 Agent 工作流系统。**
+
 multica 不需要"再造一个 Dify"。它需要:
 
 1. 把已经存在于 prompt 约定里的编排协议(backlog 停车、promote 推进、child-done 回调、metadata 传值)**下沉为引擎保证**——判断归 LLM,协调归引擎;
 2. 把 squad leader 从"全程盯梢的执行者"升级为"只负责规划的铺轨者";
 3. 补齐执行层的第三种执行者(程序),让工作沿"人 → agent → 程序"的阶梯持续下沉:**例外向上找判断力,确定性向下沉淀为代码**。
 
-它的卖点是"敢委托",指标是"少介入",护城河是介入数据和沉淀下来的流程资产——multica 卖的不是"agent 干活",是这台把判断力逐步变成资产的机器。休眠的 `issue_dependency` 表是最好的起点:最初的设计者已经预留了这条路。
+最应坚持的六条边界:动态规划、确定执行;Issue 作为唯一协作面;最小但严格的运行账本;人/agent/程序作为可替换执行者;异常向上升级、确定性向下毕业;永远可 Eject。
+
+它的卖点是"敢委托",指标是"单位合格产出的判断力成本",护城河是介入数据和沉淀下来的流程资产——multica 卖的不是"agent 干活",是这台把判断力逐步编译成组织能力的机器。休眠的 `issue_dependency` 表是最好的起点:最初的设计者已经预留了这条路。
