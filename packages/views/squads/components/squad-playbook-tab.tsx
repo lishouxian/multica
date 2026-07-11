@@ -1,9 +1,10 @@
 "use client";
 
+import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { workspaceKeys } from "@multica/core/workspace/queries";
+import { agentListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import type { PlaybookRun, Squad, SquadPlaybookResponse } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
@@ -11,6 +12,7 @@ import { Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useT, useTimeAgo } from "../../i18n";
 import { SquadPlaybookEditor } from "./squad-playbook-editor";
+import { PlaybookGraph } from "../../playbooks/playbook-graph";
 
 interface SquadPlaybookTabProps {
   squad: Squad;
@@ -34,6 +36,7 @@ export function SquadPlaybookTab({
   const timeAgo = useTimeAgo();
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
+  const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const playbookKey = [...workspaceKeys.squads(wsId), squad.id, "playbook"] as const;
   const runsKey = [...workspaceKeys.squads(wsId), squad.id, "playbook-runs"] as const;
 
@@ -77,6 +80,25 @@ export function SquadPlaybookTab({
       toast.success(t(($) => $.playbook_tab.started));
     },
   });
+  const retryMutation = useMutation({
+    mutationFn: ({ runId, stepKey }: { runId: string; stepKey: string }) =>
+      api.retryPlaybookStep(runId, stepKey),
+    onSuccess: (run) => {
+      queryClient.setQueryData<PlaybookRun[]>(runsKey, (runs) =>
+        runs?.map((candidate) => candidate.id === run.id ? run : candidate) ?? [run],
+      );
+      toast.success(t(($) => $.playbook_tab.retry_started));
+    },
+    onError: (cause) => {
+      toast.error(
+        cause instanceof Error ? cause.message : t(($) => $.playbook_tab.retry_failed),
+      );
+    },
+  });
+  const agentNames = useMemo(
+    () => new Map(agents.map((agent) => [agent.id, agent.name])),
+    [agents],
+  );
 
   if (playbookQuery.isLoading) {
     return (
@@ -93,6 +115,23 @@ export function SquadPlaybookTab({
 
   return (
     <div className="space-y-8">
+      {response?.definition && (
+        <section className="space-y-3" aria-labelledby="playbook-preview-heading">
+          <div>
+            <h3 id="playbook-preview-heading" className="text-sm font-medium">
+              {t(($) => $.playbook_tab.preview_title)}
+            </h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t(($) => $.playbook_tab.preview_description)}
+            </p>
+          </div>
+          <PlaybookGraph
+            definition={response.definition.definition}
+            agentNames={agentNames}
+          />
+        </section>
+      )}
+
       <SquadPlaybookEditor
         key={editorKey}
         initialDefinition={response?.definition?.definition ?? null}
@@ -151,6 +190,22 @@ export function SquadPlaybookTab({
                           {node.error || `${t(($) => $.playbook_tab.attempt)} ${node.attempt}`}
                         </p>
                       </div>
+                      {canManage && node.status === "needs_attention" && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          disabled={retryMutation.isPending}
+                          onClick={() => retryMutation.mutate({ runId: run.id, stepKey: node.step_key })}
+                        >
+                          {retryMutation.isPending && retryMutation.variables?.runId === run.id
+                            && retryMutation.variables.stepKey === node.step_key
+                            ? <Loader2 className="size-3.5 animate-spin" />
+                            : <RefreshCw className="size-3.5" />}
+                          {t(($) => $.playbook_tab.retry_button)}
+                        </Button>
+                      )}
                     </li>
                   ))}
                 </ol>

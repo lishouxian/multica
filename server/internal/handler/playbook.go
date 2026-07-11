@@ -33,6 +33,7 @@ type playbookRunResponse struct {
 	CreatedAt                 string                    `json:"created_at"`
 	UpdatedAt                 string                    `json:"updated_at"`
 	CompletedAt               *string                   `json:"completed_at"`
+	DefinitionSnapshot        json.RawMessage           `json:"definition_snapshot"`
 	Nodes                     []playbookNodeRunResponse `json:"nodes"`
 }
 
@@ -75,6 +76,7 @@ func playbookSnapshotToResponse(snapshot service.PlaybookRunSnapshot) playbookRu
 		CreatedAt:                 timestampToString(run.CreatedAt),
 		UpdatedAt:                 timestampToString(run.UpdatedAt),
 		CompletedAt:               timestampToPtr(run.CompletedAt),
+		DefinitionSnapshot:        json.RawMessage(run.DefinitionSnapshot),
 		Nodes:                     make([]playbookNodeRunResponse, 0, len(snapshot.Nodes)),
 	}
 	for _, node := range snapshot.Nodes {
@@ -94,6 +96,31 @@ func playbookSnapshotToResponse(snapshot service.PlaybookRunSnapshot) playbookRu
 		})
 	}
 	return response
+}
+
+func (h *Handler) GetIssuePlaybookRun(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	run, err := h.Queries.GetLatestWorkflowRunForIssue(r.Context(), db.GetLatestWorkflowRunForIssueParams{
+		WorkspaceID: issue.WorkspaceID,
+		IssueID:     issue.ID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeJSON(w, http.StatusOK, nil)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load issue playbook run")
+		return
+	}
+	nodes, err := h.Queries.ListWorkflowNodeRuns(r.Context(), run.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load issue playbook run")
+		return
+	}
+	writeJSON(w, http.StatusOK, playbookSnapshotToResponse(service.PlaybookRunSnapshot{Run: run, Nodes: nodes}))
 }
 
 func (h *Handler) GetSquadPlaybook(w http.ResponseWriter, r *http.Request) {

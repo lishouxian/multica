@@ -82,6 +82,8 @@
     "save_button": "저장"
   },
   "playbook_tab": {
+    "preview_title": "Workflow 미리보기",
+    "preview_description": "정의를 편집하기 전에 실행 경로, 에이전트, 전달 계약을 확인하세요.",
     "definition_title": "Playbook 정의",
     "definition_description": "에이전트 단계, 의존성, 입력 매핑, 구조화 출력 계약을 JSON으로 선언합니다.",
     "save_button": "새 버전 저장",
@@ -102,6 +104,9 @@
     "refresh_runs": "Run 새로고침",
     "run_issue": "Issue",
     "attempt": "시도",
+    "retry_button": "재시도",
+    "retry_started": "단계를 다시 디스패치했습니다",
+    "retry_failed": "단계 재시도에 실패했습니다.",
     "no_runs": "아직 Playbook Run이 없습니다.",
     "saved": "Playbook이 저장되었습니다",
     "disabled": "Playbook이 비활성화되었습니다",

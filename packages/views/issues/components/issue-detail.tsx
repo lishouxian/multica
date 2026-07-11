@@ -70,7 +70,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
-import { issueListOptions, issueDetailOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { issueListOptions, issueDetailOptions, issuePlaybookRunOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
@@ -93,6 +93,8 @@ import { useT } from "../../i18n";
 import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
 import { useInPageFind } from "../hooks/use-in-page-find";
 import { FindBar } from "./find-bar";
+import { IssuePlaybookRunCard } from "./issue-playbook-run-card";
+import { IssuePlaybookStepLink } from "./issue-playbook-step-link";
 import {
   AnimatedRightSidebar,
   getAnimatedRightSidebarInitialOpen,
@@ -866,6 +868,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       return cached?.description != null ? cached : undefined;
     },
   });
+  const { data: playbookRun = null } = useQuery(issuePlaybookRunOptions(wsId, id));
+  const playbookNode = playbookRun?.nodes.find((node) => node.issue_id === id) ?? null;
+  const isPlaybookRoot = playbookRun?.root_issue_id === id;
+  const playbookAgentNames = useMemo(
+    () => new Map(agents.map((agent) => [agent.id, agent.name])),
+    [agents],
+  );
 
   // Record recent visit
   const recordVisit = useRecentIssuesStore((s) => s.recordVisit);
@@ -1170,6 +1179,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     ...childIssuesOptions(wsId, id),
     enabled: !!issue,
   });
+  const visibleChildIssues = useMemo(() => {
+    if (!isPlaybookRoot || !playbookRun) return childIssues;
+    const workflowIssueIds = new Set(
+      playbookRun.nodes.flatMap((node) => node.issue_id ? [node.issue_id] : []),
+    );
+    return childIssues.filter((child) => !workflowIssueIds.has(child.id));
+  }, [childIssues, isPlaybookRoot, playbookRun]);
   // Parent's children — used to render the "x/y" progress next to the
   // "Sub-issue of …" breadcrumb under the title.
   const { data: parentChildIssues = [] } = useQuery({
@@ -1190,7 +1206,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     return clearSelection;
   }, [id, clearSelection]);
 
-  const childIssueIds = useMemo(() => childIssues.map((c) => c.id), [childIssues]);
+  const childIssueIds = useMemo(
+    () => visibleChildIssues.map((child) => child.id),
+    [visibleChildIssues],
+  );
   const childSelectedCount = childIssueIds.filter((cid) =>
     selectedIds.has(cid),
   ).length;
@@ -1981,7 +2000,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             }}
           />
 
-          {parentIssue && (
+          {parentIssue && playbookRun && playbookNode ? (
+            <IssuePlaybookStepLink
+              parentIssue={parentIssue}
+              run={playbookRun}
+              node={playbookNode}
+            />
+          ) : parentIssue ? (
             <AppLink
               href={paths.issueDetail(parentIssue.id)}
               className="mt-2 inline-flex max-w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors group/parent"
@@ -2004,6 +2029,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 );
               })()}
             </AppLink>
+          ) : null}
+
+          {playbookRun && isPlaybookRoot && (
+            <IssuePlaybookRunCard run={playbookRun} agentNames={playbookAgentNames} />
           )}
 
           <div {...descDropZoneProps} className="relative mt-5 rounded-lg">
@@ -2062,7 +2091,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           </div>
 
           {/* Sub-issues — Linear-style */}
-          {childIssues.length === 0 && (
+          {visibleChildIssues.length === 0 && (
             <div className="mt-6">
               <button
                 type="button"
@@ -2074,8 +2103,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               </button>
             </div>
           )}
-          {childIssues.length > 0 && (() => {
-            const doneCount = childIssues.filter((c) => c.status === "done").length;
+          {visibleChildIssues.length > 0 && (() => {
+            const doneCount = visibleChildIssues.filter((c) => c.status === "done").length;
             return (
               <div className="mt-10 group/sub-issues">
                 {/* Header */}
@@ -2094,9 +2123,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                     <span>{t(($) => $.detail.sub_issues_label)}</span>
                   </button>
                   <div className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5">
-                    <ProgressRing done={doneCount} total={childIssues.length} size={11} />
+                    <ProgressRing done={doneCount} total={visibleChildIssues.length} size={11} />
                     <span className="text-[11px] text-muted-foreground tabular-nums font-medium">
-                      {doneCount}/{childIssues.length}
+                      {doneCount}/{visibleChildIssues.length}
                     </span>
                   </div>
                   <input
@@ -2133,12 +2162,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
                 {/* Inline batch toolbar — appears next to the rows when
                     selections exist, instead of as a far-away fixed bar. */}
-                <BatchActionToolbar issues={childIssues} placement="inline" />
+                <BatchActionToolbar issues={visibleChildIssues} placement="inline" />
 
                 {/* List */}
                 {!subIssuesCollapsed && (() => {
-                  const groups = groupSubIssuesByStage(childIssues);
-                  const staged = childIssues.some((c) => c.stage != null);
+                  const groups = groupSubIssuesByStage(visibleChildIssues);
+                  const staged = visibleChildIssues.some((c) => c.stage != null);
                   return (
                     <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
                       {groups.map(({ stage: groupStage, items }) => (

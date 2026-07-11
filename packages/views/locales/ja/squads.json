@@ -82,6 +82,8 @@
     "save_button": "保存"
   },
   "playbook_tab": {
+    "preview_title": "Workflow プレビュー",
+    "preview_description": "定義を編集する前に、実行パス、エージェント、引き継ぎ契約を確認します。",
     "definition_title": "Playbook 定義",
     "definition_description": "エージェントのステップ、依存関係、入力マッピング、構造化出力契約を JSON で定義します。",
     "save_button": "新しいバージョンを保存",
@@ -102,6 +104,9 @@
     "refresh_runs": "Run を更新",
     "run_issue": "Issue",
     "attempt": "試行",
+    "retry_button": "再試行",
+    "retry_started": "ステップを再ディスパッチしました",
+    "retry_failed": "ステップの再試行に失敗しました。",
     "no_runs": "Playbook Run はまだありません。",
     "saved": "Playbook を保存しました",
     "disabled": "Playbook を無効化しました",

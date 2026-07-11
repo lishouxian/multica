@@ -114,6 +114,8 @@ export const issueKeys = {
   tasksAll: () => ["issues", "tasks"] as const,
   /** Per-issue task list (issue-detail Execution log section). */
   tasks: (issueId: string) => [...issueKeys.tasksAll(), issueId] as const,
+  playbookRun: (wsId: string, issueId: string) =>
+    [...issueKeys.all(wsId), "playbook-run", issueId] as const,
 };
 
 export type MyIssuesFilter = Pick<
@@ -410,6 +412,19 @@ export function issueDetailOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: issueKeys.detail(wsId, id),
     queryFn: () => api.getIssue(id),
+  });
+}
+
+export function issuePlaybookRunOptions(wsId: string, issueId: string) {
+  return queryOptions({
+    queryKey: issueKeys.playbookRun(wsId, issueId),
+    queryFn: () => api.getIssuePlaybookRun(issueId),
+    refetchInterval: (query) => {
+      const run = query.state.data;
+      return run?.status === "running" || run?.status === "needs_attention"
+        ? 3000
+        : false;
+    },
   });
 }
 

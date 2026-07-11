@@ -205,6 +205,7 @@ import {
   SquadPlaybookResponseSchema,
   PlaybookRunSchema,
   PlaybookRunListSchema,
+  IssuePlaybookRunSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
   UserSchema,
@@ -2194,6 +2195,23 @@ export class ApiClient {
     return parseWithFallback(raw, PlaybookRunSchema, EMPTY_PLAYBOOK_RUN, {
       endpoint: "POST /api/squads/:id/runs",
     }) as PlaybookRun;
+  }
+
+  async retryPlaybookStep(runId: string, stepKey: string): Promise<PlaybookRun> {
+    const raw = await this.fetch<unknown>(`/api/playbook-runs/${runId}/dispatch`, {
+      method: "POST",
+      body: JSON.stringify({ step_key: stepKey }),
+    });
+    return parseWithFallback(raw, PlaybookRunSchema, EMPTY_PLAYBOOK_RUN, {
+      endpoint: "POST /api/playbook-runs/:id/dispatch",
+    }) as PlaybookRun;
+  }
+
+  async getIssuePlaybookRun(issueId: string): Promise<PlaybookRun | null> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/playbook-run`);
+    return parseWithFallback(raw, IssuePlaybookRunSchema, null, {
+      endpoint: "GET /api/issues/:id/playbook-run",
+    }) as PlaybookRun | null;
   }
 
   // Autopilots

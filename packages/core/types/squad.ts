@@ -70,6 +70,7 @@ export interface PlaybookRun {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  definition_snapshot: Record<string, unknown>;
   nodes: PlaybookNodeRun[];
 }
 

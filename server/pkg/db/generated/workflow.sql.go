@@ -303,6 +303,49 @@ func (q *Queries) GetLatestAgentTaskForIssue(ctx context.Context, arg GetLatestA
 	return i, err
 }
 
+const getLatestWorkflowRunForIssue = `-- name: GetLatestWorkflowRunForIssue :one
+SELECT wr.id, wr.workflow_definition_id, wr.workflow_definition_version, wr.definition_snapshot, wr.workspace_id, wr.squad_id, wr.root_issue_id, wr.status, wr.context, wr.created_by, wr.created_at, wr.updated_at, wr.completed_at
+FROM workflow_run wr
+WHERE wr.workspace_id = $1
+  AND (
+    wr.root_issue_id = $2
+    OR EXISTS (
+      SELECT 1
+      FROM workflow_node_run wnr
+      WHERE wnr.workflow_run_id = wr.id
+        AND wnr.issue_id = $2
+    )
+  )
+ORDER BY wr.created_at DESC
+LIMIT 1
+`
+
+type GetLatestWorkflowRunForIssueParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+}
+
+func (q *Queries) GetLatestWorkflowRunForIssue(ctx context.Context, arg GetLatestWorkflowRunForIssueParams) (WorkflowRun, error) {
+	row := q.db.QueryRow(ctx, getLatestWorkflowRunForIssue, arg.WorkspaceID, arg.IssueID)
+	var i WorkflowRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowDefinitionID,
+		&i.WorkflowDefinitionVersion,
+		&i.DefinitionSnapshot,
+		&i.WorkspaceID,
+		&i.SquadID,
+		&i.RootIssueID,
+		&i.Status,
+		&i.Context,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const getSquadWorkflowDefinition = `-- name: GetSquadWorkflowDefinition :one
 SELECT id, workspace_id, squad_id, name, version, definition, created_at, updated_at FROM workflow_definition WHERE squad_id = $1 AND workspace_id = $2
 `
@@ -819,8 +862,6 @@ const resetWorkflowNodeForRetry = `-- name: ResetWorkflowNodeForRetry :one
 UPDATE workflow_node_run SET
     status = 'ready',
     agent_id = $2,
-    issue_id = NULL,
-    task_id = NULL,
     accepted_task_id = NULL,
     output = NULL,
     input_snapshot = $3,

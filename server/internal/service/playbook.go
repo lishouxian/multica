@@ -7,14 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -361,6 +364,7 @@ func (s *PlaybookService) StartRun(ctx context.Context, squad db.Squad, rootIssu
 	if err := s.advance(ctx, run, definition); err != nil {
 		return PlaybookRunSnapshot{}, err
 	}
+	s.projectRootIssueStatus(ctx, run, "in_progress")
 	return s.snapshot(ctx, run)
 }
 
@@ -420,6 +424,11 @@ func (s *PlaybookService) DispatchStep(ctx context.Context, params DispatchPlayb
 	}
 	if err := s.dispatchReadyNode(ctx, run, step, node, agentID); err != nil {
 		return PlaybookRunSnapshot{}, err
+	}
+	if run.Status == "needs_attention" {
+		if _, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "running"}); err != nil {
+			return PlaybookRunSnapshot{}, fmt.Errorf("resume playbook run: %w", err)
+		}
 	}
 	return s.snapshot(ctx, run)
 }
@@ -588,13 +597,93 @@ func (s *PlaybookService) advance(ctx context.Context, run db.WorkflowRun, defin
 	}
 	if allDone {
 		_, err = s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "succeeded"})
+		if err == nil {
+			s.projectRootIssueStatus(ctx, run, "in_review")
+		}
 	}
 	return err
+}
+
+func (s *PlaybookService) projectRootIssueStatus(ctx context.Context, run db.WorkflowRun, target string) {
+	issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          run.RootIssueID,
+		WorkspaceID: run.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("playbook: load root issue for status projection failed", "run_id", run.ID, "error", err)
+		return
+	}
+	if issue.Status == "done" || issue.Status == "cancelled" || issue.Status == target {
+		return
+	}
+	if target == "in_progress" && issue.Status != "backlog" && issue.Status != "todo" {
+		return
+	}
+	if target == "in_review" && issue.Status != "backlog" && issue.Status != "todo" && issue.Status != "in_progress" {
+		return
+	}
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID:          issue.ID,
+		Status:      target,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("playbook: project root issue status failed", "run_id", run.ID, "status", target, "error", err)
+		return
+	}
+	if s.IssueService == nil || s.IssueService.Bus == nil {
+		return
+	}
+	prefix := ""
+	if workspace, workspaceErr := s.Queries.GetWorkspace(ctx, issue.WorkspaceID); workspaceErr == nil {
+		prefix = workspace.IssuePrefix
+	}
+	s.IssueService.Bus.Publish(events.Event{
+		Type:        protocol.EventIssueUpdated,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   "system",
+		ActorID:     "",
+		Payload: map[string]any{
+			"issue":          issueToMap(updated, prefix),
+			"status_changed": true,
+			"prev_status":    issue.Status,
+			"source":         "playbook_run",
+		},
+	})
 }
 
 func (s *PlaybookService) dispatchReadyNode(ctx context.Context, run db.WorkflowRun, step PlaybookStep, node db.WorkflowNodeRun, agentID pgtype.UUID) error {
 	if err := s.validateDispatchAgent(ctx, run, agentID); err != nil {
 		return err
+	}
+	if node.IssueID.Valid && node.TaskID.Valid {
+		issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID: node.IssueID, WorkspaceID: run.WorkspaceID,
+		})
+		if err != nil {
+			return fmt.Errorf("load issue for step %q retry: %w", step.Key, err)
+		}
+		if issue.AssigneeType.String != "agent" || issue.AssigneeID != agentID {
+			return fmt.Errorf("step %q retry with a different agent is not supported yet", step.Key)
+		}
+		if issue.Status != "todo" {
+			issue, err = s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+				ID: issue.ID, Status: "todo", WorkspaceID: issue.WorkspaceID,
+			})
+			if err != nil {
+				return fmt.Errorf("reset issue for step %q retry: %w", step.Key, err)
+			}
+		}
+		task, err := s.IssueService.TaskService.RerunIssue(ctx, issue.ID, node.TaskID, pgtype.UUID{})
+		if err != nil {
+			return fmt.Errorf("enqueue retry for step %q: %w", step.Key, err)
+		}
+		if _, err := s.Queries.MarkWorkflowNodeRunning(ctx, db.MarkWorkflowNodeRunningParams{
+			ID: node.ID, AgentID: agentID, IssueID: issue.ID, TaskID: task.ID,
+		}); err != nil {
+			return fmt.Errorf("start retry for step %q: %w", step.Key, err)
+		}
+		return nil
 	}
 	prettyInput := string(node.InputSnapshot)
 	var formatted bytes.Buffer

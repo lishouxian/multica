@@ -11,6 +11,7 @@ import {
   EMPTY_INBOX_UNREAD_SUMMARY,
   EMPTY_USER,
   InboxUnreadSummarySchema,
+  IssuePlaybookRunSchema,
   IssueTriggerPreviewSchema,
   ListIssuesResponseSchema,
   RuntimeHourlyActivityListSchema,
@@ -378,6 +379,28 @@ describe("UserSchema timezone drift", () => {
       { endpoint: "GET /api/me" },
     );
     expect(parsed).toBe(EMPTY_USER);
+  });
+});
+
+describe("IssuePlaybookRunSchema response drift", () => {
+  it("defaults a missing definition snapshot for older backends", () => {
+    const parsed = IssuePlaybookRunSchema.parse({
+      id: "run-1",
+      workflow_definition_id: "definition-1",
+      workflow_definition_version: 1,
+      squad_id: "squad-1",
+      root_issue_id: "issue-1",
+      status: "running",
+      context: {},
+      created_at: "2026-07-12T00:00:00Z",
+      updated_at: "2026-07-12T00:00:00Z",
+      nodes: [],
+    });
+    expect(parsed?.definition_snapshot).toEqual({});
+  });
+
+  it("accepts null when an issue is not part of a playbook run", () => {
+    expect(IssuePlaybookRunSchema.parse(null)).toBeNull();
   });
 });
 

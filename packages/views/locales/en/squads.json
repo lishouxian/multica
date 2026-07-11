@@ -85,6 +85,8 @@
     "save_button": "Save"
   },
   "playbook_tab": {
+    "preview_title": "Workflow preview",
+    "preview_description": "Review the execution path, agents, and handoff contracts before editing the definition.",
     "definition_title": "Playbook definition",
     "definition_description": "Declare agent steps, dependencies, input mappings, and structured output contracts as JSON.",
     "save_button": "Save version",
@@ -105,6 +107,9 @@
     "refresh_runs": "Refresh runs",
     "run_issue": "Issue",
     "attempt": "Attempt",
+    "retry_button": "Retry",
+    "retry_started": "Step dispatched again",
+    "retry_failed": "Failed to retry step.",
     "no_runs": "No playbook runs yet.",
     "saved": "Playbook saved",
     "disabled": "Playbook disabled",

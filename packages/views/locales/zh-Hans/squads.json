@@ -82,6 +82,8 @@
     "save_button": "保存"
   },
   "playbook_tab": {
+    "preview_title": "流程预览",
+    "preview_description": "编辑定义前，先查看执行路径、智能体和交接契约。",
     "definition_title": "Playbook 定义",
     "definition_description": "用 JSON 声明智能体步骤、依赖关系、输入映射和结构化输出契约。",
     "save_button": "保存新版本",
@@ -102,6 +104,9 @@
     "refresh_runs": "刷新 Run",
     "run_issue": "Issue",
     "attempt": "尝试次数",
+    "retry_button": "重试",
+    "retry_started": "步骤已重新派发",
+    "retry_failed": "重试步骤失败。",
     "no_runs": "还没有 Playbook Run。",
     "saved": "Playbook 已保存",
     "disabled": "Playbook 已停用",

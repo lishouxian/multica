@@ -43,6 +43,22 @@ SELECT * FROM workflow_run WHERE id = $1;
 -- name: GetWorkflowRunInWorkspace :one
 SELECT * FROM workflow_run WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetLatestWorkflowRunForIssue :one
+SELECT wr.*
+FROM workflow_run wr
+WHERE wr.workspace_id = sqlc.arg(workspace_id)
+  AND (
+    wr.root_issue_id = sqlc.arg(issue_id)
+    OR EXISTS (
+      SELECT 1
+      FROM workflow_node_run wnr
+      WHERE wnr.workflow_run_id = wr.id
+        AND wnr.issue_id = sqlc.arg(issue_id)
+    )
+  )
+ORDER BY wr.created_at DESC
+LIMIT 1;
+
 -- name: GetActiveWorkflowRunForRoot :one
 SELECT * FROM workflow_run
 WHERE squad_id = $1 AND root_issue_id = $2
@@ -153,8 +169,6 @@ RETURNING *;
 UPDATE workflow_node_run SET
     status = 'ready',
     agent_id = $2,
-    issue_id = NULL,
-    task_id = NULL,
     accepted_task_id = NULL,
     output = NULL,
     input_snapshot = $3,

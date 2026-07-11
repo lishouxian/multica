@@ -810,8 +810,11 @@ export const PlaybookRunSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   completed_at: z.string().nullable().optional().transform((v) => v ?? null),
+  definition_snapshot: z.record(z.string(), z.unknown()).default({}),
   nodes: z.array(PlaybookNodeRunSchema).default([]),
 }).loose();
+
+export const IssuePlaybookRunSchema = PlaybookRunSchema.nullable();
 
 export const PlaybookRunListSchema = z.array(PlaybookRunSchema);
 
@@ -823,7 +826,8 @@ export const EMPTY_SQUAD_PLAYBOOK_RESPONSE: SquadPlaybookResponse = {
 export const EMPTY_PLAYBOOK_RUN: PlaybookRun = {
   id: "", workflow_definition_id: "", workflow_definition_version: 0,
   squad_id: "", root_issue_id: "", status: "", context: {},
-  created_at: "", updated_at: "", completed_at: null, nodes: [],
+  created_at: "", updated_at: "", completed_at: null,
+  definition_snapshot: {}, nodes: [],
 };
 
 export const EMPTY_PLAYBOOK_RUN_LIST: PlaybookRun[] = [];
