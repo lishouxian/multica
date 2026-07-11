@@ -1,9 +1,10 @@
 # Workflow 编排 — 「agent 铺轨,引擎行车」设计方案
 
-> Status: Draft(M0 实现已在独立分支动工,分支待统一)
+> Status: **Frozen for M0/M1**(§0–§2、§6 的 M0/M1 部分冻结,进入 M0 实现评审;§3.10 产品增强与 M2+ 内容仍为 Draft,待 dogfood 数据检验)
 > Owner: TBD
 > Last updated: 2026-07-11
 > Rev 3: 吸收外部 review 意见——四层账本模型、执行者×控制结构正交拆分、program v1 受控能力、依赖完成语义显式化、指标质量护栏、M1 改为三执行者纵切。
+> Rev 4(规格收口): M0 依赖流转决策表(仅 `all_succeeded`)、依赖边 provenance 与 Eject 降级、最小 node-run 状态机(task failure ≠ issue status)、program at-least-once + action 级幂等键 + 系统身份、Pause/Eject 决策表、账本纪律措辞修正、M1 拆分为 M1a/M1b。见 §2.8。
 
 ## TL;DR
 
@@ -123,7 +124,7 @@ Agent 在这个图景里不是终点,是**中间体**:既是人的替身(向上)
 两条对称的纪律:
 
 1. **运行状态永不塞进 issue。** 暂停/循环次数/跳过标记等如果没有账本,几年后一定会被硬塞进 issue status 和 metadata,长出一套隐形 run 状态机——这正是要避免的腐化路径。
-2. **账本永不长出用户可见 UI。** 所有界面从 issue 投影;`node_run` 只对引擎和调试可见,防止它反向膨胀成第二产品面(Dify 的 run log 之所以难受,不是因为它存在,而是因为用户必须住在里面)。
+2. **账本不成为独立协作界面,只投影到 Issue / Inbox / Run Banner。** 禁止的是需要用户"住进去"的独立界面,不是投影本身——Run Banner 就是账本喂出来的投影(Dify 的 run log 之所以难受,不是因为它存在,而是因为用户必须住在里面)。
 
 multica 的全部可观测面(issue 树 UI、timeline、comment、inbox、PR 联动)都长在 issue 上——**每个 Work Step 就是一个 issue,执行就是现有 task queue,人工介入就是现有 comment/status**。
 
@@ -198,7 +199,7 @@ policies: { loop_max: 3, run_deadline: 48h }
 - `any_succeeded` — 任一上游成功;
 - `on_failure` / `on_cancel` — 显式的失败/取消分支。
 
-关键规则:**上游取消或失败,默认不视为满足**——下游进入"需处置"状态或升级给 agent/人,而不是拿着缺失的输出继续跑。比起"避免静默卡住",更危险的是"静默带病推进"。这条语义是三元阶梯在引擎层的第一次真实落地,M0 就必须钉死。
+关键规则:**上游取消或失败,默认不视为满足**——下游进入"需处置"状态或升级给 agent/人,而不是拿着缺失的输出继续跑。比起"避免静默卡住",更危险的是"静默带病推进"。这条语义是三元阶梯在引擎层的第一次真实落地。**M0 只实现 `all_succeeded`**,其余语义在此定义、M1+ 按需启用;完整的 M0 决策表见 §2.8.1。
 
 **`program` 执行者,v1 只支持受控能力**(不支持任意脚本):
 
@@ -236,6 +237,68 @@ multica workflow spawn-node <run-id> --key fix_login --assignee @coder \
 ```
 
 leader 运行时动态生成后继节点和边——**但边一旦建立,后续 promote/join/失败路由全部由引擎接管**。leader 不再被每个 child-done 唤醒去"数数",只在 join 失败或 escalate 时被重新唤醒。这砍掉当前最大成本项:状态盯梢型 LLM 调用。
+
+### 2.8 M0/M1 规格收口(冻结)
+
+本节是 M0 实现评审的基准,与实现不一致以本节为准。
+
+#### 2.8.1 M0 依赖流转决策表
+
+M0 只实现 `all_succeeded`。规则**无状态**:每次上游终态事件或 reconcile tick 触发时,按所有上游的**当前状态**重算,不看历史路径。
+
+适用前提:下游 issue 处于 `backlog`、assignee 为 agent/squad、存在至少一条指向它的依赖边。
+
+| # | 触发 | 上游集合当前状态 | 下游动作 |
+|---|---|---|---|
+| 1 | 某上游 → `done` | 全部 `done` | promote 为 `todo`,enqueue assignee,写 system comment(来源=引擎) |
+| 2 | 某上游 → `done` | 存在非 `done` 且非终态 | 无动作,继续等 |
+| 3 | 某上游 → `cancelled` 或重试预算耗尽的失败 | — | 下游保持 `backlog`,标记"需处置"并通知 run 发起人 / 父 assignee;**不视为满足** |
+| 4 | 上游 `cancelled` 后被手动改为 `done` | 全部 `done` | **视为满足**,promote——只看当前状态,不看路径 |
+| 5 | 下游在依赖未满足时被手动 promote | 任意 | **人的操作永远赢**:不阻止、不回滚;写 system comment 记录"依赖未满足时被手动启动";引擎停止对该下游的 promote 监督 |
+| 6 | 下游已不在 `backlog`(任何原因) | 任意 | 引擎不再 promote(幂等:backlog→todo 至多发生一次) |
+| 7 | 建边成环 | — | 建边时事务内 DFS 拒绝;存量环由 reconcile 检测并告警 |
+
+#### 2.8.2 依赖边的 provenance 与 Eject 行为
+
+`issue_dependency` 增加 `source` 列:`user`(人工创建)或 `workflow_run_id`(引擎创建的 runtime edge)。
+
+- 自动 promote 规则对两种边**都生效**——它是通用规则(方案 D 的第一条),人工手建的依赖同样受益;
+- runtime edge 的生命周期归属其 run:run 内的重试/跳过/失败路由只作用于 runtime edge;
+- **Eject 时 runtime edge 降级为 `source=user` 的普通依赖并保留**——图结构不消失,只是引擎不再以 run 视角监督;人接管时仍能看到原有结构,通用 promote 规则继续生效;
+- 删除 workflow 定义或 run 记录,不删除已降级的边。
+
+#### 2.8.3 最小 node-run 状态机;task failure ≠ issue status
+
+```text
+pending ──► ready ──► running ──► succeeded
+                        │ ├──► failed(重试预算内)──► running(引擎重试)
+                        │ └──► cancelled
+                        └──► failed(预算耗尽)──► needs_attention ──► succeeded / skipped(人工处置)
+            ready ──► skipped(人工跳过)
+```
+
+- `workflow_node_run` 是唯一的运行状态机,issue 状态只是投影(§2.1)。
+- **一次 task 尝试失败 ≠ issue 状态变化**:重试预算内的失败只推进 node_run 内部的 attempt 计数,issue 面无感;预算耗尽进入 `needs_attention` 时才投影(issue 标记 + inbox 需处置卡)。
+- 投影单向:node_run → issue。引擎绝不从 issue 状态反推 node_run;人工改 issue 状态由 §2.8.1 的 #4/#5 规则单独处理。
+
+#### 2.8.4 Program 执行保证与权限主体
+
+- **交付语义:at-least-once。** 事件驱动 + reconcile 兜底的架构不承诺 exactly-once,不假装承诺。每个注册 action 必须声明 **action 级幂等键**(如 `create_tag` 以 tag 名幂等,通知类以 `(run_id, node_key, attempt)` 幂等),重复投递可安全重放。
+- **权限主体**:program 步骤以 **workspace 级 workflow 系统身份**运行,不借用任何个人身份。每个 action 声明所需 scope,run 创建时由创建者授予;活动日志以 "workflow X run N" 记录 actor;secret 按 scope 注入,不落 issue/comment。
+- **超时与取消**:每个 action 声明超时;超时按失败处理,进入重试/兜底 agent 链。
+
+#### 2.8.5 Pause / Eject 决策表
+
+| 维度 | Pause | Eject |
+|---|---|---|
+| 在跑的 task | 跑完为止,不派新 task | 跑完为止,结果只写 issue,不再推进 run |
+| 未激活节点 | 保持 `pending` | node_run 全部封存(终态 `ejected`) |
+| 等待中的事件 | 继续接收并记账,恢复后生效 | 停止消费 |
+| 定时器 / SLA | 挂起,恢复后重算 | 取消 |
+| 待审批卡 | 仍可回答,但不放行下游 | 转为普通 inbox 通知,无放行语义 |
+| runtime edge | 不变 | 降级为 `user` 依赖(§2.8.2) |
+| parked 的 backlog issue | 不变 | 原地保留,人工接管 |
+| 可逆性 | 可恢复,从暂停点继续 | **不可逆**,run 记录保留为"已弹出" |
 
 ---
 
@@ -351,12 +414,13 @@ Run 主视图 = 根 issue 详情页 + 顶部 Run Banner:
 
 | 阶段 | 内容 | 后端 | 前端 | 工作量* |
 |---|---|---|---|---|
-| **M0** | 状态写路径收敛 + dependency 自动 promote | ~400 行 + 收敛重构 | 0 | 2 人周 |
-| **M1** | 引擎内核 + Run Banner + 从 issue 发起 | ~2500–3500 行 | ~2000–3000 行 | 4–6 人周 |
+| **M0** | 状态写路径收敛 + dependency 自动 promote(§2.8.1 决策表) | ~400 行 + 收敛重构 | 0 | 2 人周 |
+| **M1a** | 引擎账本 + node-run 状态机 + 三执行者纵切(无 UI) | ~2000–2500 行 | 0 | 2–3 人周 |
+| **M1b** | Run Banner + inbox 卡 + 从 issue 发起 + dogfood | ~500–1000 行 | ~2000–3000 行 | 2–3 人周 |
 | **M2** | 创建器 + 审批 + 干预 + autopilot 集成 | ~2000 行 | ~3000–4000 行 | 5–7 人周 |
 | **M3** | 动态铺轨 + 固化 + 统计 | ~1500 行 | ~1500 行 | 3–4 人周 |
 
-\* 含测试(本仓库 Go 侧测试普遍是实现的 1–2 倍行数,已计入)。总计 **13–18 人周**。M0 独立有价值,M0/M1 之间是止损点。M1 纵切所需的最小程序执行者(两个内置动作)计入 M1;毕业管线等 §3.10 增强未计入,按 P0–P2 优先级另行排期。
+\* 含测试(本仓库 Go 侧测试普遍是实现的 1–2 倍行数,已计入)。总计 **13–18 人周**。M0 独立有价值;M0/M1a、M1a/M1b 之间都是止损点。M1 纵切所需的最小程序执行者(两个内置动作)计入 M1a;毕业管线等 §3.10 增强未计入,按 P0–P2 优先级另行排期。
 
 ### 4.2 后端模块
 
@@ -430,21 +494,25 @@ workflow 字段进入 issue 响应;#2143/#2147/#2192 三次事故都在这。对
 结合 §7 的备选方案分析,推荐的出场顺序不是"先建完整 workflow 产品",而是:
 
 1. **M0(现在就可动工,约 2 人周)**:① 状态变更收敛到 service 单一入口(R1);② 激活 `issue_dependency`,并**把成功/失败/取消后的传播语义钉死**(§2.4:默认 `all_succeeded`;上游失败/取消 → 下游进"需处置"状态,不视为满足);③ 用数据库条件更新 + reconcile 保证幂等(R2)。**不新增任何用户可见概念**,但"工程控制流转"的最小形态已经存在:串行链和 join 由服务端保证,不再靠 prompt 自觉。这也是方案 D(规则自动化)的第一条规则。
-2. **M1(约 3–4 人周)**:不做"多个 agent issue 串起来"的宽切面——那只能验证 DAG 引擎,验证不了本方案真正的赌注(三元阶梯)。改做**一条包含全部三种执行者的真实纵切**,直接 dogfood 发版流程:
+2. **M1(拆为 M1a / M1b 两个可独立验收的半程)**:不做"多个 agent issue 串起来"的宽切面——那只能验证 DAG 引擎,验证不了本方案真正的赌注(三元阶梯)。改做**一条包含全部三种执行者的真实纵切**,直接 dogfood 发版流程:
 
    ```text
    程序:等待 CI 事件 → agent:分析失败/起草发布说明 → 人:inbox 审批 → 程序:打 tag/发通知
    ```
 
-   配套最小外围:从 issue 发起 run、Run Banner(步骤条)、失败转人工、静默超时;program 执行者只做两个内置动作(等待 CI 事件、打 tag/通知)。**不做创建器、不做 DSL 编辑、不做画布**,剧本手写 JSON 硬编码为内置模板。一条纵切同时验证:三种执行者能否真正互换、join/retry/escalate 是否可靠、issue 投影与运行账本是否清晰、介入是否真的减少、程序步骤是否确实降本。跑一个月,盯 §0.3 的指标组。
+   - **M1a · 后端纵切(约 2–3 人周)**:引擎账本 + node-run 状态机(§2.8.3)+ 三执行者纵切跑通;program 执行者只做两个内置动作(等待 CI 事件、打 tag/通知,按 §2.8.4 的幂等与身份规格);剧本手写 JSON 硬编码,CLI 触发,**无产品面**,以集成测试验收。M1a 结束即可验证阶梯,不等 UI。
+   - **M1b · 产品投影 + dogfood(约 2–3 人周)**:Run Banner(步骤条)、inbox 审批卡与"需处置"卡、静默超时、从 issue 发起 run。然后发版流程 dogfood 一个月,盯 §0.3 的指标组。
+
+   **不做创建器、不做 DSL 编辑、不做画布。** 纵切同时验证:三种执行者能否真正互换、join/retry/escalate 是否可靠、issue 投影与运行账本是否清晰、介入是否真的减少、程序步骤是否确实降本。
 3. **M2 起由 dogfood 数据决定投资方向**:介入多因"不知道出事/处理例外太累" → 优先值班台+接手包+自治等级(§3.10 支柱二);介入少但发现大量 agent 步骤在重复做确定性的事 → 优先扩充程序动作+毕业机制(三元阶梯)。
 
 ### 6.2 分期表
 
 | 阶段 | 交付动线 | 内容 |
 |---|---|---|
-| **M0** | (无 UI) | 状态收敛 + dependency 自动 promote(含显式完成语义)+ DB 幂等,验证引擎地基,squad leader 立即受益 |
-| **M1** | B3 + C | 三执行者纵切(发版流程:程序等 CI → agent 分析 → 人审批 → 程序执行)+ Run Banner + 失败转人工 + 静默超时;内置模板,无创建器 |
+| **M0** | (无 UI) | 状态收敛 + dependency 自动 promote(§2.8.1 决策表,仅 `all_succeeded`)+ DB 幂等,验证引擎地基,squad leader 立即受益 |
+| **M1a** | (无 UI) | 引擎账本 + node-run 状态机 + 三执行者纵切(发版流程:程序等 CI → agent 分析 → 人审批 → 程序执行),集成测试验收 |
+| **M1b** | B3 + C | Run Banner + inbox 审批/需处置卡 + 静默超时 + 从 issue 发起;发版流程 dogfood 一个月;内置模板,无创建器 |
 | **M2** | A + D + E(+ §3.10 P0/P1 按数据取舍) | Describe-to-workflow 创建器、human 卡点 + inbox 审批、重试/跳过/Eject、autopilot `run_workflow`、自治等级、值班台 |
 | **M3** | F + G(+ §3.10 P2) | planner step 动态铺轨、Save as workflow 固化、程序节点毕业机制、成本/成功率统计、委托周报 |
 
