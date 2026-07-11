@@ -20,20 +20,22 @@ import (
 // ── Response types ──────────────────────────────────────────────────────────
 
 type SquadResponse struct {
-	ID            string                       `json:"id"`
-	WorkspaceID   string                       `json:"workspace_id"`
-	Name          string                       `json:"name"`
-	Description   string                       `json:"description"`
-	Instructions  string                       `json:"instructions"`
-	AvatarURL     *string                      `json:"avatar_url"`
-	LeaderID      string                       `json:"leader_id"`
-	CreatorID     string                       `json:"creator_id"`
-	CreatedAt     string                       `json:"created_at"`
-	UpdatedAt     string                       `json:"updated_at"`
-	ArchivedAt    *string                      `json:"archived_at"`
-	ArchivedBy    *string                      `json:"archived_by"`
-	MemberCount   int                          `json:"member_count"`
-	MemberPreview []SquadMemberPreviewResponse `json:"member_preview"`
+	ID                   string                       `json:"id"`
+	WorkspaceID          string                       `json:"workspace_id"`
+	Name                 string                       `json:"name"`
+	Description          string                       `json:"description"`
+	Instructions         string                       `json:"instructions"`
+	AvatarURL            *string                      `json:"avatar_url"`
+	LeaderID             string                       `json:"leader_id"`
+	CreatorID            string                       `json:"creator_id"`
+	CreatedAt            string                       `json:"created_at"`
+	UpdatedAt            string                       `json:"updated_at"`
+	ArchivedAt           *string                      `json:"archived_at"`
+	ArchivedBy           *string                      `json:"archived_by"`
+	OrchestrationMode    string                       `json:"orchestration_mode"`
+	WorkflowDefinitionID *string                      `json:"workflow_definition_id"`
+	MemberCount          int                          `json:"member_count"`
+	MemberPreview        []SquadMemberPreviewResponse `json:"member_preview"`
 }
 
 type SquadMemberPreviewResponse struct {
@@ -60,19 +62,21 @@ type SquadMemberResponse struct {
 
 func squadToResponse(s db.Squad) SquadResponse {
 	return SquadResponse{
-		ID:            uuidToString(s.ID),
-		WorkspaceID:   uuidToString(s.WorkspaceID),
-		Name:          s.Name,
-		Description:   s.Description,
-		Instructions:  s.Instructions,
-		AvatarURL:     textToPtr(s.AvatarUrl),
-		LeaderID:      uuidToString(s.LeaderID),
-		CreatorID:     uuidToString(s.CreatorID),
-		CreatedAt:     timestampToString(s.CreatedAt),
-		UpdatedAt:     timestampToString(s.UpdatedAt),
-		ArchivedAt:    timestampToPtr(s.ArchivedAt),
-		ArchivedBy:    uuidToPtr(s.ArchivedBy),
-		MemberPreview: []SquadMemberPreviewResponse{},
+		ID:                   uuidToString(s.ID),
+		WorkspaceID:          uuidToString(s.WorkspaceID),
+		Name:                 s.Name,
+		Description:          s.Description,
+		Instructions:         s.Instructions,
+		AvatarURL:            textToPtr(s.AvatarUrl),
+		LeaderID:             uuidToString(s.LeaderID),
+		CreatorID:            uuidToString(s.CreatorID),
+		CreatedAt:            timestampToString(s.CreatedAt),
+		UpdatedAt:            timestampToString(s.UpdatedAt),
+		ArchivedAt:           timestampToPtr(s.ArchivedAt),
+		ArchivedBy:           uuidToPtr(s.ArchivedBy),
+		OrchestrationMode:    s.OrchestrationMode,
+		WorkflowDefinitionID: uuidToPtr(s.WorkflowDefinitionID),
+		MemberPreview:        []SquadMemberPreviewResponse{},
 	}
 }
 

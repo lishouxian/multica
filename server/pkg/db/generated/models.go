@@ -757,18 +757,20 @@ type SkillFile struct {
 }
 
 type Squad struct {
-	ID           pgtype.UUID        `json:"id"`
-	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
-	Name         string             `json:"name"`
-	Description  string             `json:"description"`
-	LeaderID     pgtype.UUID        `json:"leader_id"`
-	CreatorID    pgtype.UUID        `json:"creator_id"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	ArchivedAt   pgtype.Timestamptz `json:"archived_at"`
-	ArchivedBy   pgtype.UUID        `json:"archived_by"`
-	AvatarUrl    pgtype.Text        `json:"avatar_url"`
-	Instructions string             `json:"instructions"`
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	Name                 string             `json:"name"`
+	Description          string             `json:"description"`
+	LeaderID             pgtype.UUID        `json:"leader_id"`
+	CreatorID            pgtype.UUID        `json:"creator_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	ArchivedAt           pgtype.Timestamptz `json:"archived_at"`
+	ArchivedBy           pgtype.UUID        `json:"archived_by"`
+	AvatarUrl            pgtype.Text        `json:"avatar_url"`
+	Instructions         string             `json:"instructions"`
+	OrchestrationMode    string             `json:"orchestration_mode"`
+	WorkflowDefinitionID pgtype.UUID        `json:"workflow_definition_id"`
 }
 
 type SquadMember struct {
@@ -943,6 +945,52 @@ type WebhookDelivery struct {
 	ReceivedAt             pgtype.Timestamptz `json:"received_at"`
 	LastAttemptAt          pgtype.Timestamptz `json:"last_attempt_at"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+}
+
+type WorkflowDefinition struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	SquadID     pgtype.UUID        `json:"squad_id"`
+	Name        string             `json:"name"`
+	Version     int32              `json:"version"`
+	Definition  []byte             `json:"definition"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkflowNodeRun struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkflowRunID       pgtype.UUID        `json:"workflow_run_id"`
+	StepKey             string             `json:"step_key"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	IssueID             pgtype.UUID        `json:"issue_id"`
+	TaskID              pgtype.UUID        `json:"task_id"`
+	AcceptedTaskID      pgtype.UUID        `json:"accepted_task_id"`
+	Status              string             `json:"status"`
+	InputSnapshot       []byte             `json:"input_snapshot"`
+	Output              []byte             `json:"output"`
+	OutputSchemaVersion int32              `json:"output_schema_version"`
+	Attempt             int32              `json:"attempt"`
+	Error               string             `json:"error"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt         pgtype.Timestamptz `json:"completed_at"`
+}
+
+type WorkflowRun struct {
+	ID                        pgtype.UUID        `json:"id"`
+	WorkflowDefinitionID      pgtype.UUID        `json:"workflow_definition_id"`
+	WorkflowDefinitionVersion int32              `json:"workflow_definition_version"`
+	DefinitionSnapshot        []byte             `json:"definition_snapshot"`
+	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
+	SquadID                   pgtype.UUID        `json:"squad_id"`
+	RootIssueID               pgtype.UUID        `json:"root_issue_id"`
+	Status                    string             `json:"status"`
+	Context                   []byte             `json:"context"`
+	CreatedBy                 pgtype.UUID        `json:"created_by"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt               pgtype.Timestamptz `json:"completed_at"`
 }
 
 type Workspace struct {

@@ -125,6 +125,8 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
+  SquadPlaybookResponse,
+  PlaybookRun,
   BillingBalance,
   BillingTransactionsPage,
   BillingBatchesPage,
@@ -177,6 +179,9 @@ import {
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_SQUAD_MEMBER_STATUS_LIST,
+  EMPTY_SQUAD_PLAYBOOK_RESPONSE,
+  EMPTY_PLAYBOOK_RUN,
+  EMPTY_PLAYBOOK_RUN_LIST,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
@@ -197,6 +202,9 @@ import {
   SquadSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
+  SquadPlaybookResponseSchema,
+  PlaybookRunSchema,
+  PlaybookRunListSchema,
   SubscribersListSchema,
   TimelineEntriesSchema,
   UserSchema,
@@ -2136,6 +2144,56 @@ export class ApiClient {
     return parseWithFallback(raw, SquadMemberStatusListResponseSchema, EMPTY_SQUAD_MEMBER_STATUS_LIST, {
       endpoint: "GET /api/squads/:id/members/status",
     }) as SquadMemberStatusListResponse;
+  }
+
+  async getSquadPlaybook(squadId: string): Promise<SquadPlaybookResponse> {
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/playbook`);
+    return parseWithFallback(raw, SquadPlaybookResponseSchema, EMPTY_SQUAD_PLAYBOOK_RESPONSE, {
+      endpoint: "GET /api/squads/:id/playbook",
+    }) as SquadPlaybookResponse;
+  }
+
+  async saveSquadPlaybook(
+    squadId: string,
+    definition: Record<string, unknown>,
+  ): Promise<SquadPlaybookResponse> {
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/playbook`, {
+      method: "PUT",
+      body: JSON.stringify({ definition }),
+    });
+    return parseWithFallback(raw, SquadPlaybookResponseSchema, EMPTY_SQUAD_PLAYBOOK_RESPONSE, {
+      endpoint: "PUT /api/squads/:id/playbook",
+    }) as SquadPlaybookResponse;
+  }
+
+  async disableSquadPlaybook(squadId: string): Promise<SquadPlaybookResponse> {
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/playbook`, {
+      method: "DELETE",
+    });
+    return parseWithFallback(raw, SquadPlaybookResponseSchema, EMPTY_SQUAD_PLAYBOOK_RESPONSE, {
+      endpoint: "DELETE /api/squads/:id/playbook",
+    }) as SquadPlaybookResponse;
+  }
+
+  async listSquadPlaybookRuns(squadId: string, limit = 20): Promise<PlaybookRun[]> {
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/runs?limit=${limit}`);
+    return parseWithFallback(raw, PlaybookRunListSchema, EMPTY_PLAYBOOK_RUN_LIST, {
+      endpoint: "GET /api/squads/:id/runs",
+    }) as PlaybookRun[];
+  }
+
+  async startSquadPlaybookRun(
+    squadId: string,
+    rootIssueId: string,
+    context: Record<string, unknown> = {},
+  ): Promise<PlaybookRun> {
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ root_issue_id: rootIssueId, context }),
+    });
+    return parseWithFallback(raw, PlaybookRunSchema, EMPTY_PLAYBOOK_RUN, {
+      endpoint: "POST /api/squads/:id/runs",
+    }) as PlaybookRun;
   }
 
   // Autopilots

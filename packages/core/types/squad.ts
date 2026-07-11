@@ -21,8 +21,56 @@ export interface Squad {
   updated_at: string;
   archived_at: string | null;
   archived_by: string | null;
+  // Optional for compatibility with cached/fixture Squad objects created
+  // before playbook orchestration was introduced. API parsing defaults the
+  // mode to "leader" and the definition id to null.
+  orchestration_mode?: "leader" | "playbook";
+  workflow_definition_id?: string | null;
   member_count?: number;
   member_preview?: SquadMemberPreview[];
+}
+
+export interface SquadPlaybookDefinition {
+  id: string;
+  squad_id: string;
+  name: string;
+  version: number;
+  definition: Record<string, unknown>;
+  updated_at: string;
+}
+
+export interface SquadPlaybookResponse {
+  orchestration_mode: "leader" | "playbook";
+  definition: SquadPlaybookDefinition | null;
+}
+
+export interface PlaybookNodeRun {
+  id: string;
+  step_key: string;
+  agent_id: string;
+  issue_id: string | null;
+  task_id: string | null;
+  accepted_task_id: string | null;
+  status: string;
+  input_snapshot: Record<string, unknown>;
+  output: unknown;
+  attempt: number;
+  error: string;
+  updated_at: string;
+}
+
+export interface PlaybookRun {
+  id: string;
+  workflow_definition_id: string;
+  workflow_definition_version: number;
+  squad_id: string;
+  root_issue_id: string;
+  status: string;
+  context: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  nodes: PlaybookNodeRun[];
 }
 
 export interface SquadMember {

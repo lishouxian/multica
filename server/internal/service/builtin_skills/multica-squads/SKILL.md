@@ -34,8 +34,9 @@ to test. These can mutate workspace state or trigger agent runs.
 
 A Multica squad is a workspace routing and coordination object.
 
-A squad is not an agent. It does not run work by itself. Current behavior:
-squad-routed work runs through the squad's `leader_id` agent.
+A squad is not an agent. In the default `leader` mode, squad-routed work runs
+through the squad's `leader_id` agent. In `playbook` mode, the leader starts or
+repairs a durable run while the server dispatches declared steps to members.
 
 Important consequences:
 
@@ -44,6 +45,12 @@ Important consequences:
 - squad-assigned autopilot resolves to the leader;
 - squad members are not automatically fanned out;
 - squad `instructions` are leader briefing content, not member prompts.
+
+For a playbook-enabled squad, normal dispatch is different: the active
+playbook creates one agent-assigned child issue per ready step, validates each
+step's structured output, freezes downstream input, and advances declared
+serial, enum-branch, and wait-all transitions. Do not duplicate these steps
+with mentions.
 
 ## CLI
 
@@ -55,6 +62,15 @@ multica squad get <squad-id> --output json
 multica squad create --name <name> --leader <agent-name-or-id> --output json
 multica squad update <squad-id> --instructions "<leader coordination policy>" --output json
 multica squad delete <squad-id>
+
+multica squad playbook get <squad-id>
+multica squad playbook set <squad-id> --file playbook.json
+multica squad playbook disable <squad-id>
+
+multica squad run start <squad-id> --issue <issue-id> [--context-file context.json]
+multica squad run list <squad-id>
+multica squad run get <run-id>
+multica squad dispatch <run-id> --step <step-key> [--agent <agent>] [--input-file input.json]
 ```
 
 Member commands:
@@ -74,6 +90,17 @@ multica squad activity <issue-id> action|no_action|failed --reason "<why>" --out
 
 `activity` is a write: it records the leader's evaluation decision on an issue.
 Use it only when acting as the squad leader after evaluating a trigger.
+
+Playbook step agents submit the machine-readable handoff before their task
+finishes:
+
+```bash
+multica task output set --task "$MULTICA_TASK_ID" --json-file result.json
+```
+
+The server validates this JSON against the step's `output_schema`. A task that
+finishes without an accepted output moves the run to `needs_attention`; its
+stdout, comments, and transcript are not substituted as handoff data.
 
 Issue/comment commands often needed with squads:
 
@@ -98,6 +125,9 @@ Prefer `--output json` for reads. Use `--help` before writes.
 - `avatar_url` — optional squad avatar URL.
 - `leader_id` — agent ID of the squad leader; the runtime target for
   squad-routed work.
+- `orchestration_mode` — `leader` or `playbook`.
+- `workflow_definition_id` — active squad-private playbook definition when
+  `orchestration_mode=playbook`, otherwise null.
 - `creator_id` — creator of the squad.
 - `archived_at` / `archived_by` — archive metadata. Archived squads are rejected
   by assignment/autopilot routing paths.
@@ -144,6 +174,32 @@ can delegate by capability instead of guessing from the role label; human
 members carry no skills segment. Builtin `multica-*` skills are not listed —
 only the workspace skills explicitly attached to the agent. Archived agent
 members are skipped from the briefing roster.
+
+For `playbook` mode the briefing replaces mention-first delegation rules with
+the Playbook Operating Protocol. It includes the concrete squad ID, active
+definition version, declared step keys, `squad run start`, `squad run list`,
+and `squad dispatch` commands. The leader handles applicability and exceptions;
+the engine handles normal handoffs.
+
+## Playbook format and handoff
+
+The squad-private JSON definition is intentionally constrained:
+
+- `version` must be `1`;
+- every step declares `key`, `title`, squad-member `agent_id`, and an
+  `output_schema`;
+- `depends_on` provides serial and wait-all semantics;
+- `when` compares one direct dependency output field to a JSON value for a
+  simple branch;
+- `input` supports `{ "from": "step.field" }`,
+  `{ "from": "context.field" }`, optional `default`, or a constant `value`;
+- cycles, undeclared dependencies, non-member agents, unknown fields, and
+  unsupported schema types are rejected at save time.
+
+At activation, each node stores an immutable `input_snapshot` containing run
+context, namespaced accepted upstream output, and mapped input. Only the
+accepted task output can advance a node. A false branch becomes `skipped`, and
+a wait-all step starts only after every dependency is `succeeded` or `skipped`.
 
 ## Issue assignment behavior
 
@@ -229,6 +285,10 @@ These actions can trigger agent work or mutate durable state:
 - mentioning a squad;
 - creating or triggering squad-assigned autopilots;
 - recording squad activity with `multica squad activity`;
+- saving/disabling a squad playbook;
+- starting a playbook run;
+- dispatching or retrying a playbook step;
+- submitting structured task output;
 - deleting/archive squad.
 
 Do not perform side-effecting actions as tests unless the user explicitly
@@ -245,6 +305,8 @@ authorizes them.
 - `description` is not proven runtime prompt content.
 - `role` is roster context, not automatic scheduling.
 - Backlog assignment does not immediately start work.
+- A playbook is not a prompt snippet: run/node-run rows are the durable truth.
+- Comments and transcripts are not structured step output.
 
 ## References
 

@@ -1064,8 +1064,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/members", h.AddSquadMember)
 					r.Delete("/members", h.RemoveSquadMember)
 					r.Patch("/members/role", h.UpdateSquadMemberRole)
+					r.Get("/playbook", h.GetSquadPlaybook)
+					r.Put("/playbook", h.SaveSquadPlaybook)
+					r.Delete("/playbook", h.DisableSquadPlaybook)
+					r.Get("/runs", h.ListSquadPlaybookRuns)
+					r.Post("/runs", h.StartSquadPlaybookRun)
 				})
 			})
+
+			r.Get("/api/playbook-runs/{runId}", h.GetPlaybookRun)
+			r.Post("/api/playbook-runs/{runId}/dispatch", h.DispatchPlaybookStep)
+			r.Put("/api/tasks/{taskId}/output", h.SetPlaybookTaskOutput)
 
 			// Squad leader evaluation (writes to activity_log)
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)

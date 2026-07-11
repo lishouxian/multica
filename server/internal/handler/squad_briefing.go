@@ -2,9 +2,11 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -96,6 +98,34 @@ Hard rules:
   @mention on this issue, or create a ` + "`" + `todo` + "`" + ` child issue assigned to
   them. Never both for the same work.`
 
+const playbookOperatingProtocol = `## Squad Playbook Operating Protocol
+
+**You are the exception handler and planner for a playbook-enabled squad.**
+The server, not prompt convention, owns normal step dispatch and handoff. Do
+not duplicate declared playbook work with @mentions or ad-hoc child issues.
+
+Your responsibilities:
+
+1. Read the root issue and decide whether the active playbook applies.
+2. Start or resume it with the concrete command shown below. Starting is
+   idempotent for the same active root issue.
+3. Stop after the run starts. The engine creates agent-assigned child issues,
+   validates structured outputs, freezes downstream inputs, and advances
+   serial, branch, and wait-all transitions without waking you.
+4. When a run enters needs_attention, inspect it and either retry a declared
+   step with squad dispatch, choose another squad agent with --agent, or
+   explain the exception to the human. Do not invent undeclared step keys.
+
+Agents submit step results with:
+` + "`" + `multica task output set --task "$MULTICA_TASK_ID" --json-file result.json` + "`" + `
+
+Hard rules:
+- accepted structured output and immutable input snapshots are the machine
+  handoff truth; comments and transcripts are human-readable context only;
+- only dispatch agents in the Squad Roster;
+- do not run the same declared step by both playbook and @mention;
+- never claim that a step advanced until the run ledger shows it.`
+
 // buildSquadLeaderBriefing composes the full system briefing appended to a
 // squad leader's Instructions when it claims a task on a squad-assigned
 // issue. The returned string contains three sections:
@@ -111,7 +141,13 @@ Hard rules:
 // loaded (deleted user/agent races, FK weirdness) are also skipped silently.
 func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad) string {
 	var sb strings.Builder
-	sb.WriteString(squadOperatingProtocol)
+	if squad.OrchestrationMode == "playbook" && squad.WorkflowDefinitionID.Valid {
+		sb.WriteString(playbookOperatingProtocol)
+		sb.WriteString("\n\n")
+		sb.WriteString(buildSquadPlaybookCommands(ctx, q, squad))
+	} else {
+		sb.WriteString(squadOperatingProtocol)
+	}
 	sb.WriteString("\n\n")
 	sb.WriteString(buildSquadRoster(ctx, q, squad))
 
@@ -121,6 +157,43 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 		sb.WriteString(")\n\n")
 		sb.WriteString(trimmed)
 	}
+	return sb.String()
+}
+
+func buildSquadPlaybookCommands(ctx context.Context, q *db.Queries, squad db.Squad) string {
+	var sb strings.Builder
+	sb.WriteString("## Active Playbook Commands\n\n")
+	squadID := util.UUIDToString(squad.ID)
+	sb.WriteString("Start or resume this root issue:\n")
+	sb.WriteString("`multica squad run start ")
+	sb.WriteString(squadID)
+	sb.WriteString(" --issue <issue-id>`\n\n")
+	sb.WriteString("Inspect recent runs:\n")
+	sb.WriteString("`multica squad run list ")
+	sb.WriteString(squadID)
+	sb.WriteString(" --output json`\n\n")
+	row, err := q.GetWorkflowDefinition(ctx, squad.WorkflowDefinitionID)
+	if err != nil {
+		sb.WriteString("The playbook definition is temporarily unavailable. Escalate instead of guessing.\n")
+		return sb.String()
+	}
+	definition, err := service.DecodePlaybookDefinition(row.Definition)
+	if err != nil {
+		sb.WriteString("The stored playbook is invalid. Escalate instead of guessing.\n")
+		return sb.String()
+	}
+	sb.WriteString(fmt.Sprintf("Definition version: %d\n\nDeclared steps:\n", row.Version))
+	for _, step := range definition.Steps {
+		sb.WriteString("- `")
+		sb.WriteString(step.Key)
+		sb.WriteString("` — ")
+		sb.WriteString(step.Title)
+		sb.WriteString(" — agent `")
+		sb.WriteString(step.AgentID)
+		sb.WriteString("`\n")
+	}
+	sb.WriteString("\nRetry or override a step after needs_attention:\n")
+	sb.WriteString("`multica squad dispatch <run-id> --step <step-key> [--agent <agent-name-or-id>] [--input-file input.json]`\n")
 	return sb.String()
 }
 

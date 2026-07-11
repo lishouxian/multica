@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -15,6 +16,186 @@ import (
 var squadCmd = &cobra.Command{
 	Use:   "squad",
 	Short: "Work with squads",
+}
+
+var squadPlaybookCmd = &cobra.Command{Use: "playbook", Short: "Configure a squad's structured handoff playbook"}
+var squadRunCmd = &cobra.Command{Use: "run", Short: "Work with squad playbook runs"}
+
+var squadPlaybookGetCmd = &cobra.Command{
+	Use: "get <squad-id>", Short: "Get a squad playbook", Args: exactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAPIClient(cmd)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := cli.APIContext(context.Background())
+		defer cancel()
+		var result map[string]any
+		if err := client.GetJSON(ctx, "/api/squads/"+args[0]+"/playbook", &result); err != nil {
+			return fmt.Errorf("get squad playbook: %w", err)
+		}
+		return cli.PrintJSON(os.Stdout, result)
+	},
+}
+
+var squadPlaybookSetCmd = &cobra.Command{
+	Use: "set <squad-id>", Short: "Validate and activate a squad playbook from JSON", Args: exactArgs(1), RunE: runSquadPlaybookSet,
+}
+
+func runSquadPlaybookSet(cmd *cobra.Command, args []string) error {
+	path, _ := cmd.Flags().GetString("file")
+	if path == "" {
+		return fmt.Errorf("--file is required")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read playbook: %w", err)
+	}
+	var definition any
+	if err := json.Unmarshal(raw, &definition); err != nil {
+		return fmt.Errorf("parse playbook JSON: %w", err)
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/squads/"+args[0]+"/playbook", map[string]any{"definition": definition}, &result); err != nil {
+		return fmt.Errorf("save squad playbook: %w", err)
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+var squadPlaybookDisableCmd = &cobra.Command{
+	Use: "disable <squad-id>", Short: "Return a squad to leader-only orchestration", Args: exactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAPIClient(cmd)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := cli.APIContext(context.Background())
+		defer cancel()
+		if err := client.DeleteJSON(ctx, "/api/squads/"+args[0]+"/playbook"); err != nil {
+			return fmt.Errorf("disable squad playbook: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "Squad playbook disabled.")
+		return nil
+	},
+}
+
+var squadRunStartCmd = &cobra.Command{
+	Use: "start <squad-id>", Short: "Start the squad playbook on an assigned root issue", Args: exactArgs(1), RunE: runSquadRunStart,
+}
+
+func runSquadRunStart(cmd *cobra.Command, args []string) error {
+	issue, _ := cmd.Flags().GetString("issue")
+	if issue == "" {
+		return fmt.Errorf("--issue is required")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	issueRef, err := resolveIssueRef(ctx, client, issue)
+	if err != nil {
+		return fmt.Errorf("resolve root issue: %w", err)
+	}
+	body := map[string]any{"root_issue_id": issueRef.ID}
+	if path, _ := cmd.Flags().GetString("context-file"); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read run context: %w", err)
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return fmt.Errorf("parse run context JSON: %w", err)
+		}
+		body["context"] = value
+	}
+	var result map[string]any
+	if err := client.PostJSON(ctx, "/api/squads/"+args[0]+"/runs", body, &result); err != nil {
+		return fmt.Errorf("start squad run: %w", err)
+	}
+	return cli.PrintJSON(os.Stdout, result)
+}
+
+var squadRunListCmd = &cobra.Command{
+	Use: "list <squad-id>", Short: "List recent squad playbook runs", Args: exactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAPIClient(cmd)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := cli.APIContext(context.Background())
+		defer cancel()
+		var result []map[string]any
+		if err := client.GetJSON(ctx, "/api/squads/"+args[0]+"/runs", &result); err != nil {
+			return fmt.Errorf("list squad runs: %w", err)
+		}
+		return cli.PrintJSON(os.Stdout, result)
+	},
+}
+
+var squadRunGetCmd = &cobra.Command{
+	Use: "get <run-id>", Short: "Get a squad playbook run and its steps", Args: exactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := newAPIClient(cmd)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := cli.APIContext(context.Background())
+		defer cancel()
+		var result map[string]any
+		if err := client.GetJSON(ctx, "/api/playbook-runs/"+args[0], &result); err != nil {
+			return fmt.Errorf("get squad run: %w", err)
+		}
+		return cli.PrintJSON(os.Stdout, result)
+	},
+}
+
+var squadDispatchCmd = &cobra.Command{
+	Use: "dispatch <run-id>", Short: "Dispatch or retry a declared playbook step", Args: exactArgs(1), RunE: runSquadDispatch,
+}
+
+func runSquadDispatch(cmd *cobra.Command, args []string) error {
+	step, _ := cmd.Flags().GetString("step")
+	if step == "" {
+		return fmt.Errorf("--step is required")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	body := map[string]any{"step_key": step}
+	if agent, _ := cmd.Flags().GetString("agent"); agent != "" {
+		agentID, err := resolveAgent(ctx, client, agent)
+		if err != nil {
+			return fmt.Errorf("resolve dispatch agent: %w", err)
+		}
+		body["agent_id"] = agentID
+	}
+	if path, _ := cmd.Flags().GetString("input-file"); path != "" {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read step input: %w", err)
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return fmt.Errorf("parse step input JSON: %w", err)
+		}
+		body["input"] = value
+	}
+	var result map[string]any
+	if err := client.PostJSON(ctx, "/api/playbook-runs/"+args[0]+"/dispatch", body, &result); err != nil {
+		return fmt.Errorf("dispatch playbook step: %w", err)
+	}
+	return cli.PrintJSON(os.Stdout, result)
 }
 
 // ── List ────────────────────────────────────────────────────────────────────
@@ -499,6 +680,21 @@ func runSquadActivity(cmd *cobra.Command, args []string) error {
 // ── Init ────────────────────────────────────────────────────────────────────
 
 func init() {
+	squadPlaybookSetCmd.Flags().String("file", "", "Path to playbook JSON (required)")
+	squadPlaybookGetCmd.Flags().String("output", "json", "Output format: json")
+	squadPlaybookSetCmd.Flags().String("output", "json", "Output format: json")
+	squadRunStartCmd.Flags().String("issue", "", "Root issue ID or identifier (required)")
+	squadRunStartCmd.Flags().String("context-file", "", "Optional JSON object with run context")
+	squadRunStartCmd.Flags().String("output", "json", "Output format: json")
+	squadRunListCmd.Flags().String("output", "json", "Output format: json")
+	squadRunGetCmd.Flags().String("output", "json", "Output format: json")
+	squadDispatchCmd.Flags().String("step", "", "Declared step key (required)")
+	squadDispatchCmd.Flags().String("agent", "", "Optional squad agent name or ID override")
+	squadDispatchCmd.Flags().String("input-file", "", "Optional immutable input JSON override")
+	squadDispatchCmd.Flags().String("output", "json", "Output format: json")
+
+	squadPlaybookCmd.AddCommand(squadPlaybookGetCmd, squadPlaybookSetCmd, squadPlaybookDisableCmd)
+	squadRunCmd.AddCommand(squadRunStartCmd, squadRunListCmd, squadRunGetCmd)
 	// list
 	squadListCmd.Flags().String("output", "table", "Output format: table or json")
 
@@ -558,4 +754,7 @@ func init() {
 	squadCmd.AddCommand(squadDeleteCmd)
 	squadCmd.AddCommand(squadMemberCmd)
 	squadCmd.AddCommand(squadActivityCmd)
+	squadCmd.AddCommand(squadPlaybookCmd)
+	squadCmd.AddCommand(squadRunCmd)
+	squadCmd.AddCommand(squadDispatchCmd)
 }

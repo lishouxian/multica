@@ -2540,6 +2540,9 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := h.PlaybookService.HandleTaskCompleted(r.Context(), task.ID); err != nil {
+		slog.Error("advance playbook after task completion failed", "task_id", taskID, "error", err)
+	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
 
@@ -3129,6 +3132,9 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("fail task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if err := h.PlaybookService.HandleTaskFailed(r.Context(), task.ID, req.Error); err != nil {
+		slog.Error("update playbook after task failure failed", "task_id", taskID, "error", err)
 	}
 
 	// Best-effort revoke of the mat_ task token minted at claim. Same

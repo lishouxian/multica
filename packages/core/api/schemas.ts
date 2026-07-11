@@ -21,6 +21,8 @@ import type {
   SearchIssuesResponse,
   SearchProjectsResponse,
   Squad,
+  SquadPlaybookResponse,
+  PlaybookRun,
   TimelineEntry,
   User,
   WebhookDelivery,
@@ -741,6 +743,8 @@ export const SquadSchema = z.object({
   updated_at: z.string(),
   archived_at: z.string().nullable().optional().transform((v) => v ?? null),
   archived_by: z.string().nullable().optional().transform((v) => v ?? null),
+  orchestration_mode: z.enum(["leader", "playbook"]).catch("leader"),
+  workflow_definition_id: z.string().nullable().optional().transform((v) => v ?? null),
   member_count: z.number().default(0),
   member_preview: z.array(SquadMemberPreviewSchema).default([]),
 }).loose();
@@ -760,9 +764,69 @@ export const EMPTY_SQUAD: Squad = {
   updated_at: "",
   archived_at: null,
   archived_by: null,
+  orchestration_mode: "leader",
+  workflow_definition_id: null,
   member_count: 0,
   member_preview: [],
 };
+
+const SquadPlaybookDefinitionSchema = z.object({
+  id: z.string(),
+  squad_id: z.string(),
+  name: z.string(),
+  version: z.number(),
+  definition: z.record(z.string(), z.unknown()),
+  updated_at: z.string(),
+}).loose();
+
+export const SquadPlaybookResponseSchema = z.object({
+  orchestration_mode: z.enum(["leader", "playbook"]).catch("leader"),
+  definition: SquadPlaybookDefinitionSchema.nullable().optional().transform((v) => v ?? null),
+}).loose();
+
+const PlaybookNodeRunSchema = z.object({
+  id: z.string(),
+  step_key: z.string(),
+  agent_id: z.string(),
+  issue_id: z.string().nullable().optional().transform((v) => v ?? null),
+  task_id: z.string().nullable().optional().transform((v) => v ?? null),
+  accepted_task_id: z.string().nullable().optional().transform((v) => v ?? null),
+  status: z.string(),
+  input_snapshot: z.record(z.string(), z.unknown()).default({}),
+  output: z.unknown().nullable().optional(),
+  attempt: z.number().default(0),
+  error: z.string().default(""),
+  updated_at: z.string(),
+}).loose();
+
+export const PlaybookRunSchema = z.object({
+  id: z.string(),
+  workflow_definition_id: z.string(),
+  workflow_definition_version: z.number(),
+  squad_id: z.string(),
+  root_issue_id: z.string(),
+  status: z.string(),
+  context: z.record(z.string(), z.unknown()).default({}),
+  created_at: z.string(),
+  updated_at: z.string(),
+  completed_at: z.string().nullable().optional().transform((v) => v ?? null),
+  nodes: z.array(PlaybookNodeRunSchema).default([]),
+}).loose();
+
+export const PlaybookRunListSchema = z.array(PlaybookRunSchema);
+
+export const EMPTY_SQUAD_PLAYBOOK_RESPONSE: SquadPlaybookResponse = {
+  orchestration_mode: "leader",
+  definition: null,
+};
+
+export const EMPTY_PLAYBOOK_RUN: PlaybookRun = {
+  id: "", workflow_definition_id: "", workflow_definition_version: 0,
+  squad_id: "", root_issue_id: "", status: "", context: {},
+  created_at: "", updated_at: "", completed_at: null, nodes: [],
+};
+
+export const EMPTY_PLAYBOOK_RUN_LIST: PlaybookRun[] = [];
 
 // Squad member status — backs the Squad detail page's Members tab. status
 // is `string | null` (not the narrow `SquadMemberStatusValue` union) so a

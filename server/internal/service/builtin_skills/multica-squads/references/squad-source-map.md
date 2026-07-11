@@ -14,7 +14,9 @@ Source:
 server/migrations/084_squad.up.sql                # base table: name, description, leader_id, creator_id
 server/migrations/085_squad_archive.up.sql        # archived_at, archived_by columns
 server/migrations/088_squad_instructions.up.sql   # instructions column
+server/migrations/161_playbook_squad.up.sql       # mode, private definition, run/node-run ledger
 server/pkg/db/queries/squad.sql
+server/pkg/db/queries/workflow.sql
 packages/core/types/squad.ts
 ```
 
@@ -25,6 +27,10 @@ Key facts:
 - `squad_member` stores `member_type`, `member_id`, and `role`.
 - `member_type` is constrained to `agent` or `member`.
 - issue `assignee_type` supports `squad`.
+- `squad.orchestration_mode` is `leader|playbook`; the active private
+  definition is referenced by `workflow_definition_id`.
+- `workflow_run` owns run context/status and `workflow_node_run` owns immutable
+  input, accepted output/task, attempt, and step status.
 
 ## CLI
 
@@ -32,6 +38,7 @@ Source:
 
 ```text
 server/cmd/multica/cmd_squad.go
+server/cmd/multica/cmd_task.go
 ```
 
 Commands:
@@ -43,6 +50,10 @@ multica squad create
 multica squad update <squad-id>
 multica squad delete <squad-id>
 multica squad activity <issue-id> <outcome>
+multica squad playbook get|set|disable ...
+multica squad run start|list|get ...
+multica squad dispatch <run-id> --step <step-key> ...
+multica task output set --task <task-id> --json-file <path>
 
 multica squad member list <squad-id>
 multica squad member add <squad-id>
@@ -81,7 +92,7 @@ Contracts:
 Source:
 
 ```text
-server/internal/handler/squad_briefing.go         # buildSquadLeaderBriefing ~104, buildSquadRoster ~121, renderMemberRow ~169, agentSkillsRosterSegment, formatRosterRow
+server/internal/handler/squad_briefing.go         # leader/playbook protocols, commands, roster
 server/internal/handler/daemon.go                  # briefing injection ~1187, ~1530
 ```
 
@@ -99,6 +110,34 @@ Contracts:
   "no skills assigned"; builtin multica-* skills are excluded and human
   members carry no skills segment (squad_briefing.go renderMemberRow);
 - no traced behavior injects `instructions` into every squad member.
+- playbook mode injects concrete start/list/dispatch commands and declared step
+  keys, and does not tell the leader to duplicate normal steps with mentions.
+
+## Playbook Runtime
+
+Source:
+
+```text
+server/internal/service/playbook.go
+server/internal/handler/playbook.go
+server/internal/handler/daemon.go                 # task complete/fail hooks
+server/internal/handler/playbook_e2e_test.go
+```
+
+Contracts:
+
+- save validates DAG shape, restricted output schemas, branch/input references,
+  agent workspace membership, and squad membership;
+- run start is idempotent for one active `(squad, root issue)` and requires the
+  root issue to be assigned to that squad;
+- ready steps become agent-assigned child issues and reuse the normal task queue;
+- accepted structured output is validated before persistence;
+- downstream input is materialized once from run context and accepted upstream
+  outputs; comments/transcripts are never read as handoff data;
+- task completion advances only after accepted output; missing output and
+  terminal failure enter `needs_attention`;
+- task-queue auto-retry is rebound to the same node-run rather than creating a
+  parallel workflow node.
 
 ## Issue Assignment
 

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -19,6 +21,39 @@ func newSquadMemberSetRoleTestCmd() *cobra.Command {
 	cmd.Flags().String("role", "", "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
+}
+
+func TestRunSquadPlaybookSetSendsDefinition(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
+	path := filepath.Join(t.TempDir(), "playbook.json")
+	if err := os.WriteFile(path, []byte(`{"version":1,"steps":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/api/squads/squad-123/playbook" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"orchestration_mode": "playbook"})
+	}))
+	defer server.Close()
+	t.Setenv("MULTICA_SERVER_URL", server.URL)
+	cmd := &cobra.Command{}
+	cmd.Flags().String("profile", "", "")
+	cmd.Flags().String("file", "", "")
+	_ = cmd.Flags().Set("file", path)
+	if err := runSquadPlaybookSet(cmd, []string{"squad-123"}); err != nil {
+		t.Fatalf("runSquadPlaybookSet: %v", err)
+	}
+	definition, ok := got["definition"].(map[string]any)
+	if !ok || definition["version"] != float64(1) {
+		t.Fatalf("body = %#v", got)
+	}
 }
 
 func TestSquadMemberSetRoleCommandIsRegistered(t *testing.T) {

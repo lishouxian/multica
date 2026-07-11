@@ -180,6 +180,10 @@ export type {
   SquadActiveIssueBrief,
   SquadMemberStatus,
   SquadMemberStatusListResponse,
+  SquadPlaybookDefinition,
+  SquadPlaybookResponse,
+  PlaybookNodeRun,
+  PlaybookRun,
 } from "./squad";
 export type {
   BillingBalance,
