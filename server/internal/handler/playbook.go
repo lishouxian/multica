@@ -2,10 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -102,11 +104,14 @@ func (h *Handler) GetSquadPlaybook(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found"); !ok {
 		return
 	}
-	if !squad.WorkflowDefinitionID.Valid {
+	row, err := h.Queries.GetSquadWorkflowDefinition(r.Context(), db.GetSquadWorkflowDefinitionParams{
+		SquadID:     squad.ID,
+		WorkspaceID: squad.WorkspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeJSON(w, http.StatusOK, map[string]any{"orchestration_mode": "leader", "definition": nil})
 		return
 	}
-	row, err := h.Queries.GetWorkflowDefinition(r.Context(), squad.WorkflowDefinitionID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load squad playbook")
 		return
@@ -159,7 +164,19 @@ func (h *Handler) DisableSquadPlaybook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to disable squad playbook")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"orchestration_mode": "leader", "definition": nil})
+	row, err := h.Queries.GetSquadWorkflowDefinition(r.Context(), db.GetSquadWorkflowDefinitionParams{
+		SquadID:     squad.ID,
+		WorkspaceID: squad.WorkspaceID,
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load squad playbook")
+		return
+	}
+	var definition any
+	if err == nil {
+		definition = playbookDefinitionToResponse(row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"orchestration_mode": "leader", "definition": definition})
 }
 
 func (h *Handler) StartSquadPlaybookRun(w http.ResponseWriter, r *http.Request) {

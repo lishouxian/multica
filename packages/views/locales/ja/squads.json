@@ -81,6 +81,32 @@
     "unsaved_changes": "保存していない変更",
     "save_button": "保存"
   },
+  "playbook_tab": {
+    "definition_title": "Playbook 定義",
+    "definition_description": "エージェントのステップ、依存関係、入力マッピング、構造化出力契約を JSON で定義します。",
+    "save_button": "新しいバージョンを保存",
+    "enable_button": "Playbook を有効化",
+    "disable_button": "無効化",
+    "unsaved_changes": "未保存の変更があります",
+    "invalid_json": "有効な JSON を入力してください。",
+    "invalid_definition": "定義は JSON オブジェクトである必要があります。",
+    "save_failed": "Playbook の保存に失敗しました。",
+    "start_title": "Run を開始",
+    "start_description": "ルート Issue はこの小隊に割り当てられている必要があります。",
+    "root_issue_label": "ルート Issue ID",
+    "root_issue_placeholder": "ルート Issue UUID",
+    "start_button": "Run を開始",
+    "start_failed": "Run の開始に失敗しました。",
+    "runs_title": "最近の Run",
+    "runs_description": "Run を展開して永続化されたステップ台帳を確認できます。",
+    "refresh_runs": "Run を更新",
+    "run_issue": "Issue",
+    "attempt": "試行",
+    "no_runs": "Playbook Run はまだありません。",
+    "saved": "Playbook を保存しました",
+    "disabled": "Playbook を無効化しました",
+    "started": "Playbook Run を開始しました"
+  },
   "scope": {
     "mine": "自分",
     "all": "すべて"

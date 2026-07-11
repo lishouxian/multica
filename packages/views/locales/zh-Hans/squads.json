@@ -81,6 +81,32 @@
     "unsaved_changes": "有未保存的修改",
     "save_button": "保存"
   },
+  "playbook_tab": {
+    "definition_title": "Playbook 定义",
+    "definition_description": "用 JSON 声明智能体步骤、依赖关系、输入映射和结构化输出契约。",
+    "save_button": "保存新版本",
+    "enable_button": "启用 Playbook",
+    "disable_button": "停用",
+    "unsaved_changes": "有未保存的修改",
+    "invalid_json": "定义必须是有效的 JSON。",
+    "invalid_definition": "定义必须是 JSON 对象。",
+    "save_failed": "保存 Playbook 失败。",
+    "start_title": "启动 Run",
+    "start_description": "根 Issue 必须已分配给当前小队。",
+    "root_issue_label": "根 Issue ID",
+    "root_issue_placeholder": "根 Issue UUID",
+    "start_button": "启动 Run",
+    "start_failed": "启动 Run 失败。",
+    "runs_title": "最近的 Run",
+    "runs_description": "展开 Run 可查看持久化的步骤账本。",
+    "refresh_runs": "刷新 Run",
+    "run_issue": "Issue",
+    "attempt": "尝试次数",
+    "no_runs": "还没有 Playbook Run。",
+    "saved": "Playbook 已保存",
+    "disabled": "Playbook 已停用",
+    "started": "Playbook Run 已启动"
+  },
   "scope": {
     "mine": "我的",
     "all": "全部"

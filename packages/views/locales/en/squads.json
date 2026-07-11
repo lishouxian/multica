@@ -84,6 +84,32 @@
     "unsaved_changes": "Unsaved changes",
     "save_button": "Save"
   },
+  "playbook_tab": {
+    "definition_title": "Playbook definition",
+    "definition_description": "Declare agent steps, dependencies, input mappings, and structured output contracts as JSON.",
+    "save_button": "Save version",
+    "enable_button": "Enable playbook",
+    "disable_button": "Disable",
+    "unsaved_changes": "Unsaved changes",
+    "invalid_json": "Definition must be valid JSON.",
+    "invalid_definition": "Definition must be a JSON object.",
+    "save_failed": "Failed to save playbook.",
+    "start_title": "Start a run",
+    "start_description": "The root issue must already be assigned to this squad.",
+    "root_issue_label": "Root issue ID",
+    "root_issue_placeholder": "Root issue UUID",
+    "start_button": "Start run",
+    "start_failed": "Failed to start run.",
+    "runs_title": "Recent runs",
+    "runs_description": "Expand a run to inspect its durable step ledger.",
+    "refresh_runs": "Refresh runs",
+    "run_issue": "Issue",
+    "attempt": "Attempt",
+    "no_runs": "No playbook runs yet.",
+    "saved": "Playbook saved",
+    "disabled": "Playbook disabled",
+    "started": "Playbook run started"
+  },
   "scope": {
     "mine": "Mine",
     "all": "All"

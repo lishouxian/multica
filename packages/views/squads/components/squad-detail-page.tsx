@@ -16,7 +16,7 @@ import { useNavigation } from "../../navigation";
 import { AppLink } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { PageHeader } from "../../layout/page-header";
-import { Users, Plus, Trash2, ArrowUpRight, Crown, Loader2, Pencil, FileText, Save } from "lucide-react";
+import { Users, Plus, Trash2, ArrowUpRight, Crown, Loader2, Pencil, FileText, Save, Workflow } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -63,6 +63,7 @@ import { toast } from "sonner";
 import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Agent, CreateAgentRequest, MemberWithUser } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { SquadPlaybookTab } from "./squad-playbook-tab";
 
 export function SquadDetailPage() {
   const { t } = useT("squads");
@@ -976,11 +977,12 @@ function SquadDescriptionEditorBody({
 // Mirrors AgentOverviewPane: dirty-guard via AlertDialog when switching tabs
 // with unsaved Instructions.
 // ---------------------------------------------------------------------------
-type SquadDetailTab = "members" | "instructions";
+type SquadDetailTab = "members" | "instructions" | "playbook";
 
 const squadDetailTabs: { id: SquadDetailTab; label: string; icon: typeof FileText }[] = [
   { id: "members", label: "Members", icon: Users },
   { id: "instructions", label: "Instructions", icon: FileText },
+  { id: "playbook", label: "Playbook", icon: Workflow },
 ];
 
 function SquadOverviewPane({
@@ -1084,6 +1086,15 @@ function SquadOverviewPane({
               squad={squad}
               canManage={canManage}
               onSave={onSaveInstructions}
+              onDirtyChange={setActiveDirty}
+            />
+          </div>
+        )}
+        {activeTab === "playbook" && (
+          <div className="flex h-full flex-col p-4 md:p-6">
+            <SquadPlaybookTab
+              squad={squad}
+              canManage={canManage}
               onDirtyChange={setActiveDirty}
             />
           </div>
