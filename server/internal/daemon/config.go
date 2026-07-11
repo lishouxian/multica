@@ -80,7 +80,7 @@ type Config struct {
 	CLIVersion                     string                // multica CLI version (e.g. "0.1.13")
 	LaunchedBy                     string                // "desktop" when spawned by the Electron app, empty for standalone
 	Profile                        string                // profile name (empty = default)
-	Agents                         map[string]AgentEntry // keyed by provider: claude, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor, kimi, kiro, antigravity
+	Agents                         map[string]AgentEntry // keyed by provider: claude, codebuddy, codex, copilot, opencode, openclaw, hermes, pi, cursor, kimi, kiro, antigravity, qoder, traecli
 	WorkspacesRoot                 string                // base path for execution envs (default: ~/multica_workspaces)
 	KeepEnvAfterTask               bool                  // preserve env after task for debugging
 	HealthPort                     int                   // local HTTP port for health checks (default: 19514)
@@ -101,6 +101,15 @@ type Config struct {
 	AgentToolWatchdog              time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = disabled); backstop for hung tools now that there is no wall-clock cap
 	ClaudeArgs                     []string
 	CodexArgs                      []string
+	CodebuddyArgs                  []string
+
+	// ProfileCommandOverrides maps a custom runtime profile_id -> the absolute
+	// executable path to use for that profile on THIS machine (MUL-3284).
+	// Sourced from the local CLI config (cli.CLIConfig.ProfileCommandOverrides),
+	// written by `multica runtime profile set-path`. appendProfileRuntimes
+	// prefers a matching, executable override over resolving the profile's
+	// command_name on PATH. nil/empty means "always resolve via PATH".
+	ProfileCommandOverrides map[string]string
 }
 
 // Overrides allows CLI flags to override environment variables and defaults.
@@ -164,11 +173,26 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// file should not prevent daemon startup, since the daemon can still run
 	// purely from env-var configuration. We log a warning and proceed with
 	// no overrides.
+	var profileCommandOverrides map[string]string
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
-	} else if oc := openclawOverrideFrom(cliCfg); oc != nil {
-		applyOpenclawOverride(oc)
+	} else {
+		if oc := openclawOverrideFrom(cliCfg); oc != nil {
+			applyOpenclawOverride(oc)
+		}
+		// Per-machine custom-runtime command path overrides (MUL-3284).
+		// Copy into our own map so later mutation of the loaded config can't
+		// alias daemon state, and so an empty map normalizes to nil.
+		if len(cliCfg.ProfileCommandOverrides) > 0 {
+			profileCommandOverrides = make(map[string]string, len(cliCfg.ProfileCommandOverrides))
+			for id, path := range cliCfg.ProfileCommandOverrides {
+				if id == "" || strings.TrimSpace(path) == "" {
+					continue
+				}
+				profileCommandOverrides[id] = path
+			}
+		}
 	}
 
 	// Probe available agent CLIs. exec.LookPath is the primary path, but on
@@ -198,9 +222,9 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	}
 	probe := func(envVar, defaultCmd, modelEnv string) (AgentEntry, bool) {
 		cmd := envOrDefault(envVar, defaultCmd)
-		if _, err := exec.LookPath(cmd); err == nil {
+		if path, err := resolveAgentExecutablePath(cmd); err == nil {
 			return AgentEntry{
-				Path:  cmd,
+				Path:  path,
 				Model: strings.TrimSpace(os.Getenv(modelEnv)),
 			}, true
 		}
@@ -248,9 +272,6 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if e, ok := probe("MULTICA_HERMES_PATH", "hermes", "MULTICA_HERMES_MODEL"); ok {
 		agents["hermes"] = e
 	}
-	if e, ok := probe("MULTICA_GEMINI_PATH", "gemini", "MULTICA_GEMINI_MODEL"); ok {
-		agents["gemini"] = e
-	}
 	if e, ok := probe("MULTICA_PI_PATH", "pi", "MULTICA_PI_MODEL"); ok {
 		agents["pi"] = e
 	}
@@ -266,6 +287,9 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if e, ok := probe("MULTICA_KIRO_PATH", "kiro-cli", "MULTICA_KIRO_MODEL"); ok {
 		agents["kiro"] = e
 	}
+	if e, ok := probe("MULTICA_CODEBUDDY_PATH", "codebuddy", "MULTICA_CODEBUDDY_MODEL"); ok {
+		agents["codebuddy"] = e
+	}
 	// agy 1.0.6 added a `--model` flag (MUL-3125), so Antigravity now takes a
 	// model env like every other backend. MULTICA_ANTIGRAVITY_MODEL seeds the
 	// daemon-wide default; its value is the exact `agy models` display string
@@ -273,8 +297,22 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if e, ok := probe("MULTICA_ANTIGRAVITY_PATH", "agy", "MULTICA_ANTIGRAVITY_MODEL"); ok {
 		agents["antigravity"] = e
 	}
+	qoderPath := envOrDefault("MULTICA_QODER_PATH", "qodercli")
+	if path, err := resolveAgentExecutablePath(qoderPath); err == nil {
+		agents["qoder"] = AgentEntry{
+			Path:  path,
+			Model: strings.TrimSpace(os.Getenv("MULTICA_QODER_MODEL")),
+		}
+	}
+	// ByteDance official TRAE CLI (the `traecli` binary from https://docs.trae.cn/cli),
+	// driven over ACP via `traecli acp serve --yolo`. MULTICA_TRAECLI_MODEL seeds
+	// the daemon-wide default model (a model id from the user's logged-in traecli
+	// catalog).
+	if e, ok := probe("MULTICA_TRAECLI_PATH", "traecli", "MULTICA_TRAECLI_MODEL"); ok {
+		agents["traecli"] = e
+	}
 	if len(agents) == 0 {
-		return Config{}, fmt.Errorf("no agent CLI found: install claude, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
+		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, openclaw, hermes, pi, cursor-agent, kimi, kiro-cli, agy, qodercli, or traecli and ensure it is on PATH")
 	}
 
 	claudeArgs, err := shellArgsFromEnv("MULTICA_CLAUDE_ARGS")
@@ -282,6 +320,10 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 	codexArgs, err := shellArgsFromEnv("MULTICA_CODEX_ARGS")
+	if err != nil {
+		return Config{}, err
+	}
+	codebuddyArgs, err := shellArgsFromEnv("MULTICA_CODEBUDDY_ARGS")
 	if err != nil {
 		return Config{}, err
 	}
@@ -491,6 +533,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		AgentToolWatchdog:              agentToolWatchdog,
 		ClaudeArgs:                     claudeArgs,
 		CodexArgs:                      codexArgs,
+		CodebuddyArgs:                  codebuddyArgs,
+		ProfileCommandOverrides:        profileCommandOverrides,
 	}, nil
 }
 
@@ -610,6 +654,98 @@ func shellArgsFromEnv(name string) ([]string, error) {
 	return args, nil
 }
 
+// resolveAgentExecutablePath returns the concrete executable path the daemon
+// should keep for an agent command. Bare command names are pinned to the path
+// resolved during startup so later PATH changes cannot redirect task launches.
+// When ~/.multica/hooks shadows a real agent binary, skip that hooks directory:
+// previously generated hook wrappers can execute the same command name and
+// recurse forever if the daemon records or launches the wrapper.
+func resolveAgentExecutablePath(cmd string) (string, error) {
+	resolved, err := exec.LookPath(cmd)
+	if err != nil {
+		return "", err
+	}
+	if strings.ContainsAny(cmd, "/\\") {
+		return resolved, nil
+	}
+	if isInMulticaHooksDir(resolved) {
+		if unshadowed, err := lookPathExcludingMulticaHooks(cmd); err == nil {
+			return unshadowed, nil
+		}
+	}
+	return canonicalExecutablePath(resolved), nil
+}
+
+func lookPathExcludingMulticaHooks(cmd string) (string, error) {
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		if isMulticaHooksDir(dir) {
+			continue
+		}
+		candidate := filepath.Join(dir, cmd)
+		if isExecutableFile(candidate) {
+			return canonicalExecutablePath(candidate), nil
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
+func isInMulticaHooksDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	return isMulticaHooksDir(filepath.Dir(path))
+}
+
+func isMulticaHooksDir(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return false
+	}
+	return samePathDir(dir, filepath.Join(home, ".multica", "hooks"))
+}
+
+func samePathDir(a, b string) bool {
+	absA, err := filepath.Abs(a)
+	if err != nil {
+		return false
+	}
+	absB, err := filepath.Abs(b)
+	if err != nil {
+		return false
+	}
+	absA = filepath.Clean(absA)
+	absB = filepath.Clean(absB)
+	if realA, err := filepath.EvalSymlinks(absA); err == nil {
+		absA = realA
+	}
+	if realB, err := filepath.EvalSymlinks(absB); err == nil {
+		absB = realB
+	}
+	return absA == absB
+}
+
+func canonicalExecutablePath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return info.Mode()&0o111 != 0
+}
+
 // defaultAgentCommandNames lists the command names the agent probe loop tries
 // before any MULTICA_*_PATH override is applied. Kept in sync with the
 // `probe(...)` calls in LoadConfig — the shell-fallback resolver uses this
@@ -617,7 +753,7 @@ func shellArgsFromEnv(name string) ([]string, error) {
 // invocation, instead of paying the cost-per-miss.
 var defaultAgentCommandNames = []string{
 	"claude", "codex", "opencode", "openclaw", "hermes",
-	"gemini", "pi", "cursor-agent", "copilot", "kimi", "kiro-cli", "agy",
+	"pi", "cursor-agent", "copilot", "kimi", "kiro-cli", "codebuddy", "agy", "traecli",
 }
 
 var codexDesktopAppBundlePaths = func() []string {
@@ -762,7 +898,9 @@ func resolveAgentsViaLoginShell(names []string) map[string]string {
 //     than hand back garbage),
 //  5. canonicalises the directory via `cd ... && pwd -P` so symlinked prefix
 //     dirs (fnm/nvm/volta) collapse to stable paths,
-//  6. prints `<name>\t<canonical_path>` one entry per line for the caller.
+//  6. if the resolved path lives in ~/.multica/hooks, searches the same
+//     shell-expanded PATH for the first executable outside that hooks dir,
+//  7. prints `<name>\t<canonical_path>` one entry per line for the caller.
 //
 // Why steps 2 is important — and why this PR's first revision missed #2512:
 // the motivating case has `alias claude=...` in ~/.zshrc *and* fnm's real
@@ -791,6 +929,18 @@ func buildLoginShellResolveScript(names []string) string {
 	b.WriteString("  [ -n \"$p\" ] || continue\n")
 	b.WriteString("  case \"$p\" in /*) ;; *) continue ;; esac\n")
 	b.WriteString("  d=$(dirname \"$p\") && f=$(basename \"$p\") && c=$(cd \"$d\" 2>/dev/null && pwd -P) || continue\n")
+	b.WriteString("  hc=\"\"\n")
+	b.WriteString("  if [ -n \"${HOME:-}\" ]; then hd=\"$HOME/.multica/hooks\"; hc=$(cd \"$hd\" 2>/dev/null && pwd -P) || hc=\"\"; fi\n")
+	b.WriteString("  if [ -n \"$hc\" ] && [ \"$c\" = \"$hc\" ]; then\n")
+	b.WriteString("    oldIFS=$IFS; IFS=:\n")
+	b.WriteString("    for d2 in $PATH; do\n")
+	b.WriteString("      [ -n \"$d2\" ] || d2=.\n")
+	b.WriteString("      c2=$(cd \"$d2\" 2>/dev/null && pwd -P) || continue\n")
+	b.WriteString("      [ \"$c2\" = \"$hc\" ] && continue\n")
+	b.WriteString("      if [ -f \"$c2/$n\" ] && [ -x \"$c2/$n\" ]; then c=\"$c2\"; f=\"$n\"; break; fi\n")
+	b.WriteString("    done\n")
+	b.WriteString("    IFS=$oldIFS\n")
+	b.WriteString("  fi\n")
 	b.WriteString("  printf '%s\\t%s\\n' \"$n\" \"$c/$f\"\n")
 	b.WriteString("done\n")
 	return b.String()

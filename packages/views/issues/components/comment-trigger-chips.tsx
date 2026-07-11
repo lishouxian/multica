@@ -5,6 +5,7 @@ import type { CommentTriggerPreviewAgent } from "@multica/core/types";
 import { useAgentPresenceDetail } from "@multica/core/agents";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
+import { AVATAR_SIZE_PX } from "@multica/ui/lib/avatar-size";
 import {
   Popover,
   PopoverContent,
@@ -22,7 +23,10 @@ import { useT } from "../../i18n";
 // a click-opened Popover so the layer survives consecutive clicks.
 // Suppression is communicated by brightness alone: lit = will trigger,
 // dimmed = skipped.
-const AVATAR_SIZE = 16;
+// The single-agent avatar renders at the `xs` tier; the `+N` overflow chip
+// and stack overlap below reuse that tier's pixel diameter so the collapsed
+// stack lines up exactly with the avatars.
+const AVATAR_SIZE = AVATAR_SIZE_PX.xs;
 const MAX_STACK_HEADS = 4;
 
 interface CommentTriggerChipsProps {
@@ -46,16 +50,19 @@ function sourceLabel(source: string, t: IssuesT): string {
   }
 }
 
-function sourceReason(agent: CommentTriggerPreviewAgent, t: IssuesT): string {
+// Assignee / @mention reasons are intentionally omitted: the header
+// (name · source) already says why they fire, so a reason line there would
+// just restate it. Only the squad-leader link (non-obvious) and the unknown
+// fallback carry information the header doesn't.
+function sourceReason(agent: CommentTriggerPreviewAgent, t: IssuesT): string | null {
   switch (agent.source) {
     case "issue_assignee":
-      return t(($) => $.comment.trigger_reason_issue_assignee, { name: agent.name });
     case "mention_agent":
-      return t(($) => $.comment.trigger_reason_mention_agent, { name: agent.name });
+      return null;
     case "mention_squad_leader":
-      return t(($) => $.comment.trigger_reason_mention_squad_leader, { name: agent.name });
+      return t(($) => $.comment.trigger_reason_mention_squad_leader);
     default:
-      return agent.reason || t(($) => $.comment.trigger_reason_unknown, { name: agent.name });
+      return agent.reason || t(($) => $.comment.trigger_reason_unknown);
   }
 }
 
@@ -92,10 +99,12 @@ function TriggerAgentTooltipBody({
         <div>{t(($) => $.comment.trigger_click_to_restore)}</div>
       ) : (
         <>
-          <div>
-            {sourceReason(agent, t)}
-            {presenceLine ? ` ${presenceLine}` : ""}
-          </div>
+          {(() => {
+            // Reason (when present) and presence share one line; either may be
+            // absent, so join only the parts that exist to avoid a stray space.
+            const line = [sourceReason(agent, t), presenceLine].filter(Boolean).join(" ");
+            return line ? <div>{line}</div> : null;
+          })()}
           <div className="text-muted-foreground">{t(($) => $.comment.trigger_click_to_skip)}</div>
         </>
       )}
@@ -335,9 +344,9 @@ function TriggerAgentAvatar({
         initials=""
         avatarUrl={agent.avatar_url}
         isAgent
-        size={AVATAR_SIZE}
+        size="xs"
       />
-      {showDot && !suppressed && <AgentStatusDot agentId={agent.id} size={AVATAR_SIZE} />}
+      {showDot && !suppressed && <AgentStatusDot agentId={agent.id} size="xs" />}
     </span>
   );
 }

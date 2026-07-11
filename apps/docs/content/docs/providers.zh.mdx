@@ -1,11 +1,11 @@
 ---
 title: AI 编程工具对照
-description: Multica 支持 12 款 AI 编程工具；它们实现同一套接口，但能力细节差异很大。
+description: Multica 支持 14 款 AI 编程工具；它们实现同一套接口，但能力细节差异很大。
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-Multica 内置支持 **12 款 AI 编程工具**。它们都实现了同一套接口——排队、派发、执行、结果回传，所以你可以从 Multica 的同一个看板上指挥任意一款。**但它们在能力细节上差异很大**：会话恢复是否真用、是否支持 MCP、skill 文件该放在哪里、模型怎么选。这一页是完整对照。
+Multica 内置支持 **14 款 AI 编程工具**。它们都实现了同一套接口——排队、派发、执行、结果回传，所以你可以从 Multica 的同一个看板上指挥任意一款。**但它们在能力细节上差异很大**：会话恢复是否真用、是否支持 MCP、skill 文件该放在哪里、模型怎么选。这一页是完整对照。
 
 创建智能体时挑选工具的指引见 [创建和配置智能体](/agents-create)。
 
@@ -15,30 +15,36 @@ Multica 内置支持 **12 款 AI 编程工具**。它们都实现了同一套接
 |---|---|---|---|---|---|
 | **Antigravity** | Google | ✅（`--conversation <id>`）| ❌ | `.agents/skills/` | 动态发现（`agy models`）|
 | **Claude Code** | Anthropic | ✅ | ✅ | `.claude/skills/` | 静态 + flag |
-| **Codex** | OpenAI | ⚠️ 代码存在但不可达 | ✅ | `$CODEX_HOME/skills/` | 静态 |
+| **CodeBuddy** | Tencent | ✅ | ✅ | `.claude/skills/` | 动态发现 |
+| **Codex** | OpenAI | ✅ | ✅ | `$CODEX_HOME/skills/` | 静态 |
 | **Copilot** | GitHub | ✅ | ❌ | `.github/skills/` | 静态（账号权益决定）|
-| **Cursor** | Anysphere | ⚠️ 代码存在但不可用 | ❌ | `.cursor/skills/` | 动态发现 |
-| **Gemini** | Google | ❌ | ❌ | `.agent_context/skills/` | 静态 |
+| **Cursor** | Anysphere | ✅ | ✅ | `.cursor/skills/` | 动态发现 |
 | **Hermes** | Nous Research | ✅ | ✅ | `.agent_context/skills/` （fallback）| 动态发现 |
 | **Kimi** | Moonshot | ✅ | ✅ | `.kimi/skills/` | 动态发现 |
 | **Kiro CLI** | Amazon | ✅ | ✅ | `.kiro/skills/` | 动态发现 |
 | **OpenCode** | SST | ✅ | ✅ | `.opencode/skills/` | 动态发现 + variant |
 | **OpenClaw** | 开源项目 | ✅ | ✅ | `.agent_context/skills/` （fallback）| 绑定在智能体上，不能在任务里切换 |
 | **Pi** | Inflection AI | ✅（session 为文件路径）| ❌ | `.pi/skills/` | 动态发现 |
+| **Qoder** | Alibaba | ✅ | ✅ | `.qoder/skills/` | 动态发现 |
+| **Trae CLI** | ByteDance | ✅（ACP `session/load`）| ✅ | `.traecli/skills/` | 动态发现 |
 
 ## 每款工具的定位
 
 ### Antigravity
 
-Google 出品。CLI 二进制名为 `agy`，搭配 Google Antigravity 服务，默认走 Gemini 系列模型。**会话恢复真用**——通过 `--conversation <id>`；因为 stdout 是纯文本而非结构化事件流，守护进程从 CLI 的日志文件里抓取 conversation UUID。**模型选择真用**——通过 `--model` flag（agy 1.0.6 新增）：守护进程用 `agy models` 枚举可选项，并把选中的值原样传入。注意这些是 `Claude Opus 4.6 (Thinking)` 这样的人类可读显示名，而非 `provider/model` slug；而且 agy 遇到无法识别的值会静默空跑，所以优先从发现列表里挑选，不要手填。Skill 文件写入 `.agents/skills/`（CLI 沿用 Gemini CLI 的 workspace 布局——见 [Antigravity 迁移文档](https://antigravity.google/docs/gcli-migration)）。
+Google 出品。CLI 二进制名为 `agy`，搭配 Google Antigravity 服务，默认走 Gemini 系列模型。Multica 使用 `agy -p` 启动 Antigravity，因为这是适合 daemon 后台任务的一次性非交互模式；`agy -i` 需要连接 TTY，不适合后台执行。当前 Antigravity CLI 在 `agy -p` 下仍可执行工具，但 stdout 是纯文本而非结构化事件流，所以 Multica 会把 transcript 作为 text 转发，暂时无法展示逐工具 telemetry。**会话恢复真用**——通过 `--conversation <id>`，守护进程从 CLI 的日志文件里抓取 conversation UUID。**模型选择真用**——通过 `--model` flag（agy 1.0.6 新增）：守护进程用 `agy models` 枚举可选项，并把选中的值原样传入。注意这些是 `Claude Opus 4.6 (Thinking)` 这样的人类可读显示名，而非 `provider/model` slug；而且 agy 遇到无法识别的值会静默空跑，所以优先从发现列表里挑选，不要手填。Skill 文件写入 `.agents/skills/`（CLI 沿用 Gemini CLI 的 workspace 布局——见 [Antigravity 迁移文档](https://antigravity.google/docs/gcli-migration)）。
 
 ### Claude Code
 
 Anthropic 出品。**新用户首选**——功能最完整：会话恢复真用，会读 MCP 配置，支持 `--max-turns`、`--append-system-prompt` 等细调参数。需要一个 Anthropic API 密钥。
 
+### CodeBuddy
+
+Tencent 出品。一款兼容 Claude Code 的 CLI agent——Multica 用和 Claude Code 一样的 stream-json 协议驱动它，所以会话恢复可用（通过 `--resume`），MCP 配置通过 `--mcp-config` 传入，skill 沿用 Claude Code 的 `.claude/skills/` 布局。模型为动态发现。
+
 ### Codex
 
-OpenAI 出品。使用 JSON-RPC 2.0 协议，状态化更强，approve 机制更细（手动批准 `exec_command` 和 `patch_apply`）。MCP 配置会写入单次任务的 `$CODEX_HOME/config.toml`。**会话恢复代码存在但当前不可达**——如果你需要 resume，选 Claude Code 或 ACP 系列。
+OpenAI 出品。使用 JSON-RPC 2.0 协议，状态化更强，approve 机制更细（手动批准 `exec_command` 和 `patch_apply`）。MCP 配置会写入单次任务的 `$CODEX_HOME/config.toml`。**会话恢复可用**——Multica 通过 Codex app-server 的 `thread/resume` 续接；如果已保存的 thread 不存在或过期，会回退到新 thread，让任务继续执行。
 
 ### Copilot
 
@@ -46,15 +52,19 @@ GitHub 出品。模型路由走你的 GitHub 账号权益——工具自己不�
 
 ### Cursor
 
-Anysphere 出品，Cursor 编辑器的 CLI 对应物。**会话恢复代码存在但实际不工作**——Cursor CLI 的事件流里不回传 session ID，所以你传的 resume 值永远无效。如果要 resume，选别的。
-
-### Gemini
-
-Google 出品，支持 Gemini 2.5 和 3 系列。**不支持会话恢复也不支持 MCP**——适合一次性、不需要长上下文记忆的任务。
+Anysphere 出品，Cursor 编辑器的 CLI 对应物。**会话恢复可用**——当前 Cursor Agent 的 stream-json 事件会返回 `session_id`，Multica 会在下一次运行时通过 `--resume <id>` 传回去。MCP 配置会写入任务工作区的 `.cursor/mcp.json`，Cursor 的项目 approval 文件写在单次任务的 `CURSOR_DATA_DIR` 下，因此托管的 MCP server 不依赖用户全局 Cursor approvals。
 
 ### Hermes
 
 Nous Research 出品。使用 ACP 协议（和 Kimi 共享传输层）。会话恢复真用，MCP 配置通过 ACP `mcpServers` 传入。但 **skill 注入路径是通用 fallback**（`.agent_context/skills/`），不是专用路径——如果 Hermes CLI 本身不读这路径，skill 对它可能不起作用。需要结合实测再确认。
+
+**指定 Hermes profile。** 要让 Hermes 使用某个 profile 启动，把智能体的 `custom_args` 设成 profile flag 和 profile 名两个独立条目。例如使用名为 `research` 的 profile：
+
+```json
+["-p", "research"]
+```
+
+不要合成一个字符串 `"-p research"`；Multica 会把数组里的每一项作为一个独立 argv 参数传给工具。`custom_args` 是按智能体配置的——见 [创建和配置智能体](/agents-create)。
 
 ### Kimi
 
@@ -76,23 +86,23 @@ SST 出品，开源。动态发现可用模型和模型 variant（扫 CLI 的配
 
 Inflection AI 出品，极简主义。**会话恢复机制特殊**——session ID 是磁盘上的文件路径（`~/.pi/...`），而不是字符串 ID。其他工具里，resume id 是 CLI 返回的字符串；Pi 里，resume id 就是会话文件本身。
 
+### Qoder
+
+Alibaba 出品。一款 agentic 编程 CLI。使用 ACP 协议（和 Hermes、Kimi、Kiro CLI 共享传输层）。会话恢复通过 ACP `session/resume` 工作，MCP 配置通过 ACP `mcpServers` 传入，模型为动态发现，skill 复制到 `.qoder/skills/` 做原生发现。
+
+### Trae
+
+ByteDance 官方 TRAE CLI（`traecli`，搭配 Trae IDE，**不是**开源的 `bytedance/trae-agent`）。它是 ACP 原生工具，Multica 通过 `traecli acp serve --yolo` 在 stdio 上驱动它，传输层和 Kiro、Qoder 相同。会话恢复通过 ACP `session/load` 工作，MCP 配置通过 ACP `mcpServers` 传入，模型为动态发现并可通过 `session/set_model` 在任务中切换，skill 复制到 `.traecli/skills/`。
+
 ## 会话恢复：谁真的支持
 
-会话恢复的机制在 [执行任务](/tasks#任务能接着上次的上下文继续吗) 里讲过。这里按工具列**精确现状**：
-
-| 状态 | 工具 | 含义 |
-|---|---|---|
-| ✅ 真用 | Antigravity、Claude Code、Copilot、Hermes、Kimi、Kiro CLI、OpenCode、OpenClaw、Pi | 传 resume id，会从上次上下文接着继续 |
-| ⚠️ 代码存在但不可达 | Codex、Cursor | 代码里有 resume 路径但实际走不到（Codex 静默回落、Cursor session id 不回传）—— **当作不支持** |
-| ❌ 无 | Gemini | CLI 无 resume 机制 |
-
-**对你的决策**：如果工作流需要智能体在多次任务之间保持上下文（失败重试、手动重跑、对话式迭代），只选 ✅ 那一行的工具。
+会话恢复的机制在 [执行任务](/tasks#任务能接着上次的上下文继续吗) 里讲过。**所有支持的工具都能恢复会话**——传 resume id，任务就会从上次的上下文接着继续。唯一的特例是 Pi：它的 resume id 是磁盘上的会话文件路径，而不是字符串 ID（见上文 [Pi](#pi)）。
 
 ## MCP 配置：按工具不同
 
-**12 款工具里有 7 款实际消费 `mcp_config`：Claude Code、Codex、Hermes、Kimi、Kiro CLI、OpenCode、OpenClaw**。其他 5 款会接收这个字段但**忽略**——不报错、不警告，只是配置不生效。
+**14 款工具里有 11 款实际消费 `mcp_config`：Claude Code、CodeBuddy、Codex、Cursor、Hermes、Kimi、Kiro CLI、OpenCode、OpenClaw、Qoder、Trae CLI**。其他 3 款会接收这个字段但**忽略**——不报错、不警告，只是配置不生效。
 
-各工具的接入方式不同：Claude Code 通过 `--mcp-config` 加 `--strict-mcp-config` 接收；Codex 会把 daemon 管理的 `mcp_servers` block 写入单次任务的 `$CODEX_HOME/config.toml`；Hermes、Kimi、Kiro CLI 通过 ACP `mcpServers` 接收；OpenCode 通过 `OPENCODE_CONFIG_CONTENT` 环境变量内联接收；OpenClaw 通过 Multica 的单次任务配置 wrapper 接收 `mcp.servers`。OpenCode 这条路径**不会**改写项目里的 `opencode.json`。
+各工具的接入方式不同：Claude Code 和 CodeBuddy 通过 `--mcp-config` 加 `--strict-mcp-config` 接收；Codex 会把 daemon 管理的 `mcp_servers` block 写入单次任务的 `$CODEX_HOME/config.toml`；Cursor 会写入 `.cursor/mcp.json`，并把项目 approval 写到单次任务的 `CURSOR_DATA_DIR`；Hermes、Kimi、Kiro CLI、Qoder、Trae CLI 通过 ACP `mcpServers` 接收；OpenCode 通过 `OPENCODE_CONFIG_CONTENT` 环境变量内联接收；OpenClaw 通过 Multica 的单次任务配置 wrapper 接收 `mcp.servers`。OpenCode 这条路径**不会**改写项目里的 `opencode.json`。
 
 <Callout type="warning">
 如果你在智能体配置里设置了 `mcp_config`，但选了矩阵 MCP 列没有标 ✅ 的工具，你的 MCP server 对这个智能体**没有效果**。MCP 集成是按工具实现的。
@@ -105,6 +115,7 @@ Inflection AI 出品，极简主义。**会话恢复机制特殊**——session 
 | 工具 | 路径 | 是否原生发现 |
 |---|---|---|
 | Claude Code | `.claude/skills/` | ✅ 原生 |
+| CodeBuddy | `.claude/skills/` | ✅ 原生 |
 | Codex | `$CODEX_HOME/skills/` | ✅ 原生 |
 | Copilot | `.github/skills/` | ✅ 原生 |
 | Cursor | `.cursor/skills/` | ✅ 原生 |
@@ -112,12 +123,15 @@ Inflection AI 出品，极简主义。**会话恢复机制特殊**——session 
 | Kiro CLI | `.kiro/skills/` | ✅ 原生 |
 | OpenCode | `.opencode/skills/` | ✅ 原生 |
 | Pi | `.pi/skills/` | ✅ 原生 |
+| Qoder | `.qoder/skills/` | ✅ 原生 |
+| Trae CLI | `.traecli/skills/` | ✅ 原生 |
 | Antigravity | `.agents/skills/` | ✅ 原生（沿用 Gemini CLI 的 workspace 布局——见 [Antigravity 文档](https://antigravity.google/docs/gcli-migration)）|
-| Gemini | `.agent_context/skills/` | ⚠️ 通用 fallback |
 | Hermes | `.agent_context/skills/` | ⚠️ 通用 fallback |
 | OpenClaw | `.agent_context/skills/` | ⚠️ 通用 fallback |
 
-fallback 路径对应的工具是否真的读取这个目录，取决于工具本身的文档——没保证。如果你的 skill 对 Gemini / Hermes / OpenClaw 没起效，先查这个问题。
+fallback 路径对应的工具是否真的读取这个目录，取决于工具本身的文档——没保证。如果你的 skill 对 Hermes / OpenClaw 没起效，先查这个问题。
+
+对原生项目级路径来说，repo-scoped discovery 是预期行为：如果检出的仓库已经包含对应目录，底层工具可以自己发现这些提交在仓库里的 Skill。你不需要为了在这个仓库里使用这些 repo skills 而先把它们导入 Multica。Multica 会保持这些仓库文件不变。如果某个工作区 Skill 的自然目录名相同，守护进程会把工作区副本写到类似 `review-helper-multica` 的无冲突 sibling 目录。
 
 skill 的创建和使用详见 [技能](/skills)。
 

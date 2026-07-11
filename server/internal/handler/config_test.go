@@ -5,7 +5,50 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/auth"
 )
+
+func TestGetConfigReportsCdnSignedMode(t *testing.T) {
+	origStorage := testHandler.Storage
+	origSigner := testHandler.CFSigner
+	testHandler.Storage = &mockStorage{}
+	defer func() {
+		testHandler.Storage = origStorage
+		testHandler.CFSigner = origSigner
+	}()
+
+	fetch := func() AppConfig {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+		w := httptest.NewRecorder()
+		testHandler.GetConfig(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var cfg AppConfig
+		if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+			t.Fatalf("decode config: %v", err)
+		}
+		return cfg
+	}
+
+	testHandler.CFSigner = nil
+	if cfg := fetch(); cfg.CdnSigned {
+		t.Fatalf("cdn_signed: want false without a CloudFront signer, got true")
+	}
+
+	// With signing enabled the same cdn_domain serves private content via
+	// signed URLs only — clients must be told raw storage URLs won't load.
+	testHandler.CFSigner = &auth.CloudFrontSigner{}
+	cfg := fetch()
+	if !cfg.CdnSigned {
+		t.Fatalf("cdn_signed: want true with a CloudFront signer, got false")
+	}
+	if cfg.CdnDomain != "cdn.example.com" {
+		t.Fatalf("cdn_domain: want cdn.example.com alongside cdn_signed, got %q", cfg.CdnDomain)
+	}
+}
 
 func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	origStorage := testHandler.Storage
@@ -85,6 +128,7 @@ func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
 }
 
 func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
+	t.Setenv("MULTICA_APP_URL", "")
 	t.Setenv("FRONTEND_ORIGIN", "https://multica.internal.example/")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -109,6 +153,7 @@ func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
 
 func TestGetConfigOmitsOfficialCloudDaemonSetup(t *testing.T) {
 	t.Setenv("MULTICA_PUBLIC_URL", "https://api.multica.ai")
+	t.Setenv("MULTICA_APP_URL", "")
 	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -239,5 +284,35 @@ func TestGetConfigExposesWorkspaceCreationDisabled(t *testing.T) {
 	}
 	if !cfg.WorkspaceCreationDisabled {
 		t.Fatalf("workspace_creation_disabled: want true with env on, got false (body=%s)", w.Body.String())
+	}
+}
+
+func TestGetConfigExposesFrontendFeatureFlags(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	h.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig default flags: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var cfg AppConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode default config: %v", err)
+	}
+	if cfg.FeatureFlags["composio_mcp_apps"] {
+		t.Fatalf("composio_mcp_apps: want false by default, got true")
+	}
+
+	withComposioMCPAppsFlag(t, h, true)
+	w = httptest.NewRecorder()
+	h.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig enabled flags: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode enabled config: %v", err)
+	}
+	if !cfg.FeatureFlags["composio_mcp_apps"] {
+		t.Fatalf("composio_mcp_apps: want true with flag enabled, got false")
 	}
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from "react";
-import { Virtuoso } from "react-virtuoso";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { useDefaultLayout, usePanelRef } from "react-resizable-panels";
 import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
@@ -14,12 +14,14 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleCheck,
+  Milestone,
   MoreHorizontal,
   PanelRight,
   Pin,
   PinOff,
   Plus,
   Tag,
+  Unlink,
   Users,
 } from "lucide-react";
 import { BreadcrumbHeader, type BreadcrumbSegment } from "../../layout/breadcrumb-header";
@@ -48,13 +50,15 @@ import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly } from "@multica/core/issues/date";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
-import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
+import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StagePicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
+import { maxSiblingStage } from "./pickers/stage-picker";
 import { IssueActionsDropdown, useIssueActions } from "../actions";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { LocalDirectoryHint } from "../../projects/components/local-directory-hint";
 import { CommentCard } from "./comment-card";
 import { CommentInput } from "./comment-input";
 import { ResolvedThreadBar } from "./resolved-thread-bar";
+import { ThreadMinimap, type ThreadMinimapThread } from "./thread-minimap";
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
@@ -86,6 +90,15 @@ import { cn } from "@multica/ui/lib/utils";
 import { ProgressRing } from "./progress-ring";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
+import { useIssueDetailScrollRestore } from "../hooks/use-issue-detail-scroll-restore";
+import { useInPageFind } from "../hooks/use-in-page-find";
+import { FindBar } from "./find-bar";
+import {
+  AnimatedRightSidebar,
+  getAnimatedRightSidebarInitialOpen,
+  rightSidebarPanelMotionProps,
+  useAnimatedRightSidebarState,
+} from "../../layout/animated-right-sidebar";
 
 function SubscriberPopoverContent({
   members,
@@ -137,7 +150,7 @@ function SubscriberPopoverContent({
                     className="flex items-center gap-2.5"
                   >
                     <Checkbox checked={isSubbed} className="pointer-events-none" />
-                    <ActorAvatar actorType="member" actorId={m.user_id} size={22} />
+                    <ActorAvatar actorType="member" actorId={m.user_id} size="md" />
                     <span className="truncate flex-1">{m.name}</span>
                   </CommandItem>
                 );
@@ -156,7 +169,7 @@ function SubscriberPopoverContent({
                     className="flex items-center gap-2.5"
                   >
                     <Checkbox checked={isSubbed} className="pointer-events-none" />
-                    <ActorAvatar actorType="agent" actorId={a.id} size={22} showStatusDot />
+                    <ActorAvatar actorType="agent" actorId={a.id} size="md" showStatusDot />
                     <span className="truncate flex-1">{a.name}</span>
                   </CommandItem>
                 );
@@ -296,7 +309,11 @@ const EMPTY_REPLIES: TimelineEntry[] = [];
 // means appending here, wiring its row in the JSX switch below, and
 // adding a locale key. The picker, visibility rules, and add-property
 // menu all flow from this one list.
-const OPTIONAL_PROP_KEYS = ["priority", "start_date", "due_date", "labels"] as const;
+// `stage` is only meaningful for a sub-issue (relative to its siblings), so
+// its row and add-property entry are gated on `issue.parent_issue_id` at the
+// render site below — it stays in this list so seeding/visibility flow through
+// the same machinery as the other optional props.
+const OPTIONAL_PROP_KEYS = ["priority", "stage", "start_date", "due_date", "labels"] as const;
 type OptionalPropKey = (typeof OPTIONAL_PROP_KEYS)[number];
 
 function isOptionalPropSet(
@@ -307,6 +324,8 @@ function isOptionalPropSet(
   switch (key) {
     case "priority":
       return issue.priority !== "none";
+    case "stage":
+      return issue.stage !== null && issue.stage !== undefined;
     case "start_date":
       return !!issue.start_date;
     case "due_date":
@@ -314,6 +333,30 @@ function isOptionalPropSet(
     case "labels":
       return attachedLabelsCount > 0;
   }
+}
+
+// groupSubIssuesByStage orders a parent's children for display: staged groups
+// ascending by stage, then the unstaged group (stage === null) last. Callers
+// render a per-group stage header only when the set is actually staged.
+export function groupSubIssuesByStage(
+  children: Issue[],
+): { stage: number | null; items: Issue[] }[] {
+  const byStage = new Map<number, Issue[]>();
+  const unstaged: Issue[] = [];
+  for (const c of children) {
+    if (c.stage != null) {
+      const arr = byStage.get(c.stage);
+      if (arr) arr.push(c);
+      else byStage.set(c.stage, [c]);
+    } else {
+      unstaged.push(c);
+    }
+  }
+  const groups: { stage: number | null; items: Issue[] }[] = [...byStage.keys()]
+    .sort((a, b) => a - b)
+    .map((s) => ({ stage: s, items: byStage.get(s) as Issue[] }));
+  if (unstaged.length > 0) groups.push({ stage: null, items: unstaged });
+  return groups;
 }
 
 // Shallow array equality by element identity. Used to reuse the previous
@@ -489,7 +532,7 @@ function ActivityBlock({
         } else if (isDueDateChange) {
           leadIcon = <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" />;
         } else {
-          leadIcon = <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size={16} />;
+          leadIcon = <ActorAvatar actorType={entry.actor_type} actorId={entry.actor_id} size="sm" />;
         }
 
         return (
@@ -621,7 +664,7 @@ function SubIssueRow({ child }: { child: Issue }) {
             <ActorAvatar
               actorType={child.assignee_type}
               actorId={child.assignee_id}
-              size={20}
+              size="sm"
               className="shrink-0"
             />
           ) : (
@@ -682,7 +725,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   });
   const sidebarRef = usePanelRef();
   const isMobile = useIsMobile();
-  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(defaultSidebarOpen);
+  const desktopSidebarInitialOpen = getAnimatedRightSidebarInitialOpen(
+    defaultSidebarOpen,
+    defaultLayout,
+  );
+  const {
+    open: desktopSidebarOpen,
+    visualOpen: desktopSidebarVisualOpen,
+    motionEnabled: desktopSidebarMotionEnabled,
+    beginToggle: beginDesktopSidebarToggle,
+    handleResize: handleDesktopSidebarResize,
+  } = useAnimatedRightSidebarState(desktopSidebarInitialOpen);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -977,6 +1030,22 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     [timelineView.groups, expandedResolved],
   );
 
+  // In-page find (Cmd/Ctrl+F). `items.length` is the content signal that
+  // triggers a match recompute when comments are added/removed; text edits
+  // are caught by the hook's own MutationObserver. Opening find forces the
+  // timeline to render flat below so every comment is in the DOM to match.
+  const find = useInPageFind({
+    container: scrollContainerEl,
+    contentKey: items.length,
+    enabled: !!issue,
+  });
+  // Close the bar (and drop highlights) when navigating to another issue —
+  // the web route reuses this component instead of remounting.
+  const closeFind = find.closeFind;
+  useEffect(() => {
+    closeFind();
+  }, [id, closeFind]);
+
   // ID of the trailing activity block — the only one expanded by default.
   const lastActivityGroupId = useMemo(() => {
     for (let i = timelineView.groups.length - 1; i >= 0; i--) {
@@ -1010,6 +1079,59 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     if (!rootId) return -1;
     return items.findIndex((it) => it.id === rootId);
   }, [items, highlightCommentId, replyToRoot]);
+
+  // Quick-jump minimap rail: one tick per comment thread (folded resolved
+  // bars included), activity groups skipped. Derived from the same flat
+  // `items` array Virtuoso renders so tick order always matches the page.
+  const minimapThreads = useMemo<ThreadMinimapThread[]>(
+    () =>
+      items.flatMap((it) =>
+        it.kind === "comment" || it.kind === "resolved-bar"
+          ? [{ id: it.id, entry: it.entry }]
+          : [],
+      ),
+    [items],
+  );
+
+  // When the timeline renders flat (deep-link or in-page find), there is no
+  // Virtuoso instance — minimap jumps drive the scroll container directly.
+  const isFlatTimeline = !!highlightCommentId || find.open;
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const jumpFlashTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (jumpFlashTimerRef.current !== null) window.clearTimeout(jumpFlashTimerRef.current);
+    },
+    [],
+  );
+  const jumpToThread = useCallback(
+    (threadId: string) => {
+      if (isFlatTimeline) {
+        // Flat mode mounts every row, so the anchor is always in the DOM.
+        // Drive the container's scrollTop directly — never native
+        // scrollIntoView, which also scrolls the desktop shell (#3929).
+        const el = document.getElementById(`comment-${threadId}`);
+        const container = scrollContainerEl;
+        if (!el || !container) return;
+        const c = container.getBoundingClientRect();
+        const e = el.getBoundingClientRect();
+        container.scrollTop = Math.max(0, container.scrollTop + (e.top - c.top) - 16);
+      } else {
+        // Virtualized mode: the target row may not be mounted, so scroll by
+        // index and let Virtuoso mount it. Offset leaves a small top gap.
+        const index = items.findIndex((it) => it.id === threadId);
+        if (index < 0) return;
+        virtuosoRef.current?.scrollToIndex({ index, align: "start", offset: -16 });
+      }
+      // Flash the landed thread the same way inbox deep-links do, so the eye
+      // has an anchor after the instant jump. (Folded resolved bars don't
+      // take the highlight prop — the scroll itself is the feedback there.)
+      setHighlightedId(threadId);
+      if (jumpFlashTimerRef.current !== null) window.clearTimeout(jumpFlashTimerRef.current);
+      jumpFlashTimerRef.current = window.setTimeout(() => setHighlightedId(null), 2000);
+    },
+    [isFlatTimeline, items, scrollContainerEl],
+  );
 
   const {
     reactions: issueReactions,
@@ -1167,27 +1289,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     };
   }, [highlightCommentId, items, targetIdx, scrollContainerEl, replyToRoot, expandedResolved, timelineView, toggleResolvedExpand]);
 
-  // Cmd-F / Ctrl-F on a virtualized timeline only searches what's mounted in
-  // the viewport — off-screen comments are invisible to browser find-in-page.
-  // Intercept once per (session, issue) when the list is long enough that the
-  // user might actually try; let the keystroke pass through on short lists.
-  // Real fix is in-app search (separate PR); this is the toast stopgap.
-  useEffect(() => {
-    if (items.length <= 30) return;
-    const flagKey = `multica_cmdF_warned:${id}`;
-    const handler = (e: KeyboardEvent) => {
-      if (e.key !== "f" || !(e.metaKey || e.ctrlKey)) return;
-      if (sessionStorage.getItem(flagKey)) return;
-      e.preventDefault();
-      sessionStorage.setItem(flagKey, "1");
-      toast.message(t(($) => $.detail.cmdf_toast_title), {
-        description: t(($) => $.detail.cmdf_toast_description),
-      });
-    };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
-  }, [id, items.length, t]);
-
   const descEditorRef = useRef<ContentEditorRef>(null);
   const { isDragOver: descDragOver, dropZoneProps: descDropZoneProps } = useFileDropZone({
     onDrop: (files) => files.forEach((f) => descEditorRef.current?.uploadFile(f)),
@@ -1198,17 +1299,29 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   // `attachment_ids` on the next description save. Drives editor previews
   // so text/code attachments show an Eye before the bind round-trips.
   const [descPendingAttachments, setDescPendingAttachments] = useState<Attachment[]>([]);
+  const descPendingAttachmentsRef = useRef<Attachment[]>([]);
   const descEditorAttachments = descPendingAttachments.length > 0
     ? [...(issueAttachments ?? []), ...descPendingAttachments]
     : issueAttachments;
   const handleDescriptionUpload = useCallback(
     async (file: File) => {
       const result = await uploadWithToast(file);
-      if (result) setDescPendingAttachments((prev) => [...prev, result]);
+      if (result) {
+        descPendingAttachmentsRef.current = [
+          ...descPendingAttachmentsRef.current,
+          result,
+        ];
+        setDescPendingAttachments(descPendingAttachmentsRef.current);
+      }
       return result;
     },
     [uploadWithToast],
   );
+
+  useEffect(() => {
+    descPendingAttachmentsRef.current = [];
+    setDescPendingAttachments([]);
+  }, [id]);
 
   // Shared issue actions (mutations, pin, copy-link, modal dispatch, etc.).
   // Called before the `if (!issue)` early return so hook order stays stable.
@@ -1283,9 +1396,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
     const panel = sidebarRef.current;
     if (!panel) return;
-    if (panel.isCollapsed()) panel.expand();
-    else panel.collapse();
-  }, [isMobile, sidebarRef]);
+    const nextOpen = panel.isCollapsed();
+    beginDesktopSidebarToggle(nextOpen);
+    window.requestAnimationFrame(() => {
+      if (nextOpen) panel.expand();
+      else panel.collapse();
+    });
+  }, [beginDesktopSidebarToggle, isMobile, sidebarRef]);
+
+  useIssueDetailScrollRestore({
+    restoreKey: `${wsId}:${id}`,
+    scrollContainerEl,
+    ready: !!issue && !loading && !timelineLoading,
+    disabled: !!highlightCommentId,
+  });
 
   if (loading) {
     return (
@@ -1296,7 +1420,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           <Skeleton className="h-4 w-24" />
         </div>
         <div className="flex flex-1 min-h-0">
-          <div className="flex-1 overflow-y-auto">
+          {/* Same scrollbar-gutter as the loaded scroller below, so the skeleton
+              column doesn't shift sideways when real content mounts. */}
+          <div className="flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]">
             <div className="mx-auto w-full max-w-4xl px-8 py-8 space-y-6">
               <Skeleton className="h-8 w-3/4" />
               <div className="space-y-2">
@@ -1391,6 +1517,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               />
             </PropRow>
           )}
+          {issue.parent_issue_id != null && visibleOptionalProps.has("stage") && (
+            <PropRow label={t(($) => $.detail.prop_stage)}>
+              <StagePicker
+                stage={issue.stage}
+                onUpdate={handleUpdateField}
+                maxStage={maxSiblingStage(parentChildIssues)}
+                align="start"
+                defaultOpen={autoOpenProp === "stage"}
+              />
+            </PropRow>
+          )}
           {visibleOptionalProps.has("start_date") && (
             <PropRow label={t(($) => $.detail.prop_start_date)}>
               <StartDatePicker
@@ -1423,7 +1560,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               not yet displayed. Hidden once every optional field is on
               screen. Sits inside the same grid as a full-row, with its
               own padding so the visual rhythm follows the rows above. */}
-          {OPTIONAL_PROP_KEYS.some((k) => !visibleOptionalProps.has(k)) && (
+          {OPTIONAL_PROP_KEYS.some((k) => !visibleOptionalProps.has(k) && (k !== "stage" || issue.parent_issue_id != null)) && (
             <div className="col-span-2 mt-1">
               <Popover open={addPropPopoverOpen} onOpenChange={setAddPropPopoverOpen}>
                 <PopoverTrigger
@@ -1437,7 +1574,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                     icon the resulting picker uses, so the dropdown reads
                     as a preview of what will show up below. */}
                 <PopoverContent align="start" className="w-44 p-1">
-                  {OPTIONAL_PROP_KEYS.filter((k) => !visibleOptionalProps.has(k)).map((k) => (
+                  {OPTIONAL_PROP_KEYS.filter((k) => !visibleOptionalProps.has(k) && (k !== "stage" || issue.parent_issue_id != null)).map((k) => (
                     <button
                       key={k}
                       type="button"
@@ -1446,6 +1583,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                     >
                       {k === "priority" && (
                         <PriorityIcon priority="medium" inheritColor className="text-muted-foreground" />
+                      )}
+                      {k === "stage" && (
+                        <Milestone className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                       )}
                       {k === "start_date" && (
                         <CalendarClock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
@@ -1458,6 +1598,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       )}
                       <span className="truncate">
                         {k === "priority" && t(($) => $.detail.prop_priority)}
+                        {k === "stage" && t(($) => $.detail.prop_stage)}
                         {k === "start_date" && t(($) => $.detail.prop_start_date)}
                         {k === "due_date" && t(($) => $.detail.prop_due_date)}
                         {k === "labels" && t(($) => $.detail.prop_labels)}
@@ -1486,14 +1627,25 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${parentIssueOpen ? "rotate-90" : ""}`} />
           </button>
           {parentIssueOpen && <div className="pl-2">
-            <AppLink
-              href={paths.issueDetail(parentIssue.id)}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1.5 -mx-2 text-xs hover:bg-accent/50 transition-colors group"
-            >
-              <StatusIcon status={parentIssue.status} className="h-3.5 w-3.5 shrink-0" />
-              <span className="text-muted-foreground shrink-0">{parentIssue.identifier}</span>
-              <span className="truncate group-hover:text-foreground">{parentIssue.title}</span>
-            </AppLink>
+            <div className="flex items-center gap-0.5 rounded-md px-2 -mx-2 hover:bg-accent/50 transition-colors group">
+              <AppLink
+                href={paths.issueDetail(parentIssue.id)}
+                className="flex flex-1 min-w-0 items-center gap-1.5 py-1.5 text-xs"
+              >
+                <StatusIcon status={parentIssue.status} className="h-3.5 w-3.5 shrink-0" />
+                <span className="text-muted-foreground shrink-0">{parentIssue.identifier}</span>
+                <span className="truncate group-hover:text-foreground">{parentIssue.title}</span>
+              </AppLink>
+              <button
+                type="button"
+                title={t(($) => $.actions.remove_parent_issue)}
+                aria-label={t(($) => $.actions.remove_parent_issue)}
+                onClick={() => actions.removeParent()}
+                className="shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                <Unlink className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>}
         </div>
       )}
@@ -1527,7 +1679,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </button>
         {detailsOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
           <PropRow label={t(($) => $.detail.prop_created_by)}>
-            <ActorAvatar actorType={issue.creator_type} actorId={issue.creator_id} size={18} enableHoverCard />
+            <ActorAvatar actorType={issue.creator_type} actorId={issue.creator_id} size="sm" enableHoverCard />
             <span className="cursor-pointer truncate">{getActorName(issue.creator_type, issue.creator_id)}</span>
           </PropRow>
           <PropRow label={t(($) => $.detail.prop_created)}>
@@ -1697,7 +1849,13 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       : [];
 
   const detailContent = (
-    <div className="flex h-full min-w-0 flex-1 flex-col">
+    <div className="relative flex h-full min-w-0 flex-1 flex-col">
+        {/* In-page find bar — floats over the top-right of the content column
+            (below the breadcrumb header), outside the scroll container so it
+            stays put while the timeline scrolls and its own text isn't walked. */}
+        {find.open && (
+          <FindBar find={find} className="absolute right-4 top-14 z-20" />
+        )}
         <BreadcrumbHeader
           segments={breadcrumbSegments}
           leaf={
@@ -1796,10 +1954,16 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           }
         />
 
+        {/* scrollbar-gutter both-edges: with classic (space-taking) scrollbars —
+            macOS with a mouse or "always show", Windows, Linux — the global
+            `scrollbar-width: thin` carves ~11px off the right side only, so the
+            centered column reads 32px left vs 43px right (MUL-4404). Mirroring
+            the gutter restores symmetry; overlay-scrollbar platforms reserve
+            nothing and render unchanged. */}
         <div
           ref={setScrollContainerEl}
           data-tab-scroll-root
-          className="relative flex-1 overflow-y-auto"
+          className="relative flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
         >
         <div className="mx-auto w-full max-w-4xl px-8 py-8">
           <TitleEditor
@@ -1862,13 +2026,17 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 // webview) — while still working on web via the cookie/proxy.
                 // This mirrors the comment/reply/chat composers, which already
                 // bind via `contentReferencesAttachment` (MUL-3130 / MUL-3192).
-                const ids = descPendingAttachments
+                const ids = descPendingAttachmentsRef.current
                   .filter((a) => contentReferencesAttachment(md, a))
                   .map((a) => a.id);
                 handleUpdateField({ description: md, attachment_ids: ids.length > 0 ? ids : undefined });
               }}
               onUploadFile={handleDescriptionUpload}
               debounceMs={1500}
+              // Closing the issue modal must save what the user last saw —
+              // without the flush, a paste followed by a quick close loses
+              // the image markdown and its attachment_ids bind (MUL-3254).
+              flushPendingOnUnmount
               currentIssueId={id}
               attachments={descEditorAttachments}
             />
@@ -1882,6 +2050,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               />
               <FileUploadButton
                 size="sm"
+                multiple
                 onSelect={(file) => descEditorRef.current?.uploadFile(file)}
               />
             </div>
@@ -1960,16 +2129,31 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
                 {/* Inline batch toolbar — appears next to the rows when
                     selections exist, instead of as a far-away fixed bar. */}
-                <BatchActionToolbar placement="inline" />
+                <BatchActionToolbar issues={childIssues} placement="inline" />
 
                 {/* List */}
-                {!subIssuesCollapsed && (
-                  <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
-                    {childIssues.map((child) => (
-                      <SubIssueRow key={child.id} child={child} />
-                    ))}
-                  </div>
-                )}
+                {!subIssuesCollapsed && (() => {
+                  const groups = groupSubIssuesByStage(childIssues);
+                  const staged = childIssues.some((c) => c.stage != null);
+                  return (
+                    <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
+                      {groups.map(({ stage: groupStage, items }) => (
+                        <Fragment key={groupStage ?? "unstaged"}>
+                          {staged && (
+                            <div className="bg-muted/40 px-3 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                              {groupStage == null
+                                ? t(($) => $.stage.none)
+                                : t(($) => $.stage.value, { n: groupStage })}
+                            </div>
+                          )}
+                          {items.map((child) => (
+                            <SubIssueRow key={child.id} child={child} />
+                          ))}
+                        </Fragment>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
@@ -1999,7 +2183,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                             key={`${sub.user_type}-${sub.user_id}`}
                             actorType={sub.user_type}
                             actorId={sub.user_id}
-                            size={24}
+                            size="md"
                             enableHoverCard
                           />
                         ))}
@@ -2054,6 +2238,9 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               //     proportional to items.length (markdown + lowlight per
               //     comment), which is acceptable in the deep-link case —
               //     the user has explicit intent to land on a specific item.
+              //   - `find.open` (in-page Cmd/Ctrl+F) → also render flat, so
+              //     every comment is in the DOM for the find walk to match
+              //     and highlight. Same explicit-intent cold-mount trade-off.
               //   - otherwise → Virtuoso. Browsing mode, virtualization
               //     wins on first-paint perf for long timelines.
               //
@@ -2061,7 +2248,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
               // on a target" have fundamentally opposed contracts (estimated
               // heights vs real heights). Trying to satisfy both in one
               // path is what produced the bug history this PR closes.
-              !highlightCommentId ? (
+              !highlightCommentId && !find.open ? (
                 !scrollContainerEl ? (
                   // Skeleton while the callback ref populates so the gap
                   // between IssueDetail mount and Virtuoso mount doesn't
@@ -2071,6 +2258,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   <div className="mt-4">
                     <Virtuoso
                       key={`${wsId}:${id}`}
+                      ref={virtuosoRef}
                       customScrollParent={scrollContainerEl}
                       data={items}
                       increaseViewportBy={{ top: 800, bottom: 800 }}
@@ -2107,6 +2295,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           </div>
         </div>
         </div>
+
+        {/* Thread quick-jump rail — overlays the scroll container's left
+            gutter (inside the px-8 content padding, so it never covers
+            text). Hover previews a thread, click jumps to it. Hidden on
+            mobile: no hover, and the gutter is too tight. */}
+        {!isMobile && (
+          <ThreadMinimap
+            threads={minimapThreads}
+            scrollContainerEl={scrollContainerEl}
+            onJump={jumpToThread}
+            className="absolute bottom-0 left-2 top-12"
+          />
+        )}
       </div>
   );
 
@@ -2131,19 +2332,19 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       <ResizableHandle />
       <ResizablePanel
         id="sidebar"
-        defaultSize={defaultSidebarOpen ? 320 : 0}
+        {...rightSidebarPanelMotionProps}
+        data-right-sidebar-motion={desktopSidebarMotionEnabled ? "enabled" : undefined}
+        defaultSize={desktopSidebarOpen ? 320 : 0}
         minSize={260}
         maxSize={420}
         collapsible
         groupResizeBehavior="preserve-pixel-size"
         panelRef={sidebarRef}
-        onResize={(size) => setDesktopSidebarOpen(size.inPixels > 0)}
+        onResize={handleDesktopSidebarResize}
       >
-      <div className="overflow-y-auto border-l h-full">
-        <div className="p-4">
+        <AnimatedRightSidebar open={desktopSidebarVisualOpen} motionEnabled={desktopSidebarMotionEnabled}>
           {sidebarContent}
-        </div>
-      </div>
+        </AnimatedRightSidebar>
       </ResizablePanel>
     </ResizablePanelGroup>
   );

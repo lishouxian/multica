@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,7 +21,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
+	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -28,6 +32,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 // randomID returns a random 16-byte hex string used as a request ID for
@@ -84,11 +90,32 @@ type Config struct {
 	CloudRuntimeFleetTimeout time.Duration
 	AttachmentDownloadMode   string
 	AttachmentDownloadURLTTL time.Duration
+	// AttachmentFrameAncestors are trusted browser origins allowed to embed
+	// attachment preview responses. In production this should mirror the
+	// frontend/CORS origin allowlist so split app/api self-hosted deployments
+	// can frame API-hosted PDFs without allowing arbitrary third-party frames.
+	AttachmentFrameAncestors []string
+	// LLM* configure the basic LLM API layer (MUL-4238). They back the
+	// server-internal LLM helpers in pkg/llm (e.g. chat title generation).
+	// The generic OpenAI-compatible passthrough endpoints were removed in
+	// MUL-4309; LLM access is internal-only now. When both LLMAPIKey and
+	// LLMBaseURL are empty the layer is disabled and callers fall back
+	// silently (see maybeGenerateChatTitleAsync).
+	//   - LLMAPIKey       -> MULTICA_LLM_API_KEY
+	//   - LLMBaseURL       -> MULTICA_LLM_BASE_URL (OpenAI or any compatible gateway)
+	//   - LLMDefaultModel  -> MULTICA_LLM_DEFAULT_MODEL (used when a request omits `model`)
+	LLMAPIKey       string
+	LLMBaseURL      string
+	LLMDefaultModel string
 }
 
 type cloudRuntimeProxy interface {
 	Enabled() bool
 	Do(ctx context.Context, req cloudruntime.Request) (*cloudruntime.Response, error)
+}
+
+type RuntimeProfileRefreshNotifier interface {
+	NotifyRuntimeProfilesChanged(workspaceID, profileID string)
 }
 
 type Handler struct {
@@ -97,6 +124,7 @@ type Handler struct {
 	TxStarter             txStarter
 	Hub                   *realtime.Hub
 	DaemonHub             *daemonws.Hub
+	DaemonProfileRefresh  RuntimeProfileRefreshNotifier
 	Bus                   *events.Bus
 	TaskService           *service.TaskService
 	IssueService          *service.IssueService
@@ -106,6 +134,7 @@ type Handler struct {
 	ModelListStore        ModelListStore
 	LocalSkillListStore   LocalSkillListStore
 	LocalSkillImportStore LocalSkillImportStore
+	FeatureFlags          *featureflag.Service
 	LivenessStore         LivenessStore
 	HeartbeatScheduler    HeartbeatScheduler
 	Storage               storage.Storage
@@ -144,18 +173,50 @@ type Handler struct {
 	// UI consults IsConfigured() to decide whether to surface install
 	// entry points.
 	LarkAPIClient lark.APIClient
-	// LarkHub owns the per-installation supervisor goroutines that
-	// hold the §4.4 WS lease and run the EventConnector. Nil only
-	// when the master at-rest key (MULTICA_LARK_SECRET_KEY) is unset.
-	// The router constructs the Hub but does NOT call Run on it; the
-	// process owner (main.go) starts it under a long-running context
-	// and joins via WaitWithTimeout (bounded wait, fenced by
-	// ShutdownTimeout) during graceful shutdown so the lease renewer
-	// can yield cleanly when the DB is healthy without blocking
-	// process exit indefinitely if the pool is frozen — at worst the
-	// next replica waits the full TTL.
-	LarkHub *lark.Hub
-	cfg     Config
+	// Composio integration (MUL-3720). Nil when COMPOSIO_API_KEY is unset;
+	// the composio HTTP handlers return 503 in that case. Wired in
+	// cmd/server/router.go after handler.New.
+	Composio *composio.Service
+	// ChannelSupervisor owns the per-installation supervisor goroutines
+	// that hold the §4.4 WS lease and drive each channel.Channel
+	// (MUL-3620 generalized the Feishu-only Hub into this channel-agnostic
+	// engine). The router constructs it UNCONDITIONALLY — it drives any
+	// channel type, not just Feishu, so it does not depend on the Lark
+	// master key; each platform registers its Factory only when configured
+	// (Feishu when MULTICA_LARK_SECRET_KEY is set). The router does NOT
+	// call Run; the process owner (main.go) starts it under a long-running
+	// context and joins via WaitWithTimeout (bounded, fenced by
+	// ShutdownTimeout) during graceful shutdown so the lease renewer yields
+	// cleanly when the DB is healthy without blocking process exit if the
+	// pool is frozen — at worst the next replica waits the full TTL.
+	ChannelSupervisor *engine.Supervisor
+	// ChannelRouter is the channel-agnostic inbound pipeline (the shared
+	// handler the Supervisor injects into every Channel). main.go calls
+	// Drain on it during shutdown, after the Supervisor has stopped
+	// delivering events, to flush debounced run triggers and join in-flight
+	// reply goroutines. Built unconditionally (even without Lark).
+	ChannelRouter *engine.Router
+	// SlackInstall owns the bring-your-own-app Slack install lifecycle (register
+	// pasted tokens / list / revoke) and the at-rest encryption of each app's bot
+	// + app tokens (MUL-3666). Nil unless MULTICA_SLACK_SECRET_KEY is set.
+	SlackInstall *slack.InstallService
+	// SlackBindingTokens mints/redeems the user-binding tokens behind the
+	// "link your Slack account" prompt (MUL-3666). Nil unless Slack is
+	// configured (MULTICA_SLACK_SECRET_KEY set).
+	SlackBindingTokens *slack.BindingTokenService
+	// SlackHistory backs the agent-facing `multica chat history` command: it
+	// reads a chat session's bound Slack conversation on demand (MUL-3871). Nil
+	// unless Slack is configured; GetChatChannelHistory then reports "no channel
+	// integration". A future platform satisfies the same reader interface.
+	SlackHistory ChatChannelHistoryReader
+	// LLM is the basic LLM API layer (MUL-4238): a thin wrapper over the
+	// OpenAI Go SDK backing server-internal one-shot LLM helpers such as chat
+	// title generation. The generic passthrough endpoints were removed in
+	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
+	// Config); when unconfigured its Enabled() reports false and callers fall
+	// back silently.
+	LLM *llm.Client
+	cfg Config
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {
@@ -181,6 +242,10 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 	if len(daemonHubs) > 0 {
 		daemonHub = daemonHubs[0]
 	}
+	var daemonProfileRefresh RuntimeProfileRefreshNotifier
+	if daemonHub != nil {
+		daemonProfileRefresh = daemonHub
+	}
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
@@ -190,6 +255,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		TxStarter:             txStarter,
 		Hub:                   hub,
 		DaemonHub:             daemonHub,
+		DaemonProfileRefresh:  daemonProfileRefresh,
 		Bus:                   bus,
 		TaskService:           taskSvc,
 		IssueService:          service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
@@ -210,14 +276,52 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 			BaseURL: cfg.CloudRuntimeFleetURL,
 			Timeout: cfg.CloudRuntimeFleetTimeout,
 		}),
+		LLM: llm.New(llm.Config{
+			APIKey:       cfg.LLMAPIKey,
+			BaseURL:      cfg.LLMBaseURL,
+			DefaultModel: cfg.LLMDefaultModel,
+		}),
 		cfg: cfg,
 	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	// Marshal the body up front so we can advertise an accurate Content-Length
+	// header. Streaming straight into the ResponseWriter after WriteHeader forces
+	// net/http into chunked transfer encoding, which omits Content-Length; buffering
+	// first lets clients (and proxies) see the exact body size.
+	body, err := json.Marshal(v)
+	if err != nil {
+		// Fall back to a minimal, self-describing error payload rather than leaving
+		// the client with a half-written response.
+		body = []byte(`{"error":"failed to encode response"}`)
+		status = http.StatusInternalServerError
+	}
+	// Match the trailing newline that json.Encoder.Encode historically appended.
+	body = append(body, '\n')
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(body)
+}
+
+// writeMeasuredJSON behaves like writeJSON but returns the encoded body size so
+// callers can record payload bytes in slow-endpoint diagnostics. It measures the
+// uncompressed JSON length and is unrelated to transport compression.
+func writeMeasuredJSON(w http.ResponseWriter, status int, v any) (int, error) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode response")
+		return 0, err
+	}
+	body = append(body, '\n')
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(status)
+	if _, err := w.Write(body); err != nil {
+		return len(body), err
+	}
+	return len(body), nil
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
@@ -245,7 +349,41 @@ func timestampToString(t pgtype.Timestamptz) string { return util.TimestampToStr
 func timestampToPtr(t pgtype.Timestamptz) *string   { return util.TimestampToPtr(t) }
 func dateToPtr(d pgtype.Date) *string               { return util.DateToPtr(d) }
 func uuidToPtr(u pgtype.UUID) *string               { return util.UUIDToPtr(u) }
-func int8ToPtr(v pgtype.Int8) *int64                { return util.Int8ToPtr(v) }
+
+// uuidsToStrings maps a UUID array column to string ids, skipping NULL/invalid
+// entries. Returns nil (not an empty slice) when there is nothing to emit so
+// `omitempty` JSON fields drop out cleanly (MUL-4195).
+func uuidsToStrings(us []pgtype.UUID) []string {
+	if len(us) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(us))
+	for _, u := range us {
+		if u.Valid {
+			out = append(out, uuidToString(u))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// uuidStringsOrEmpty preserves the distinction between a modern, authoritative
+// empty UUID-array value (`[]`) and a field omitted by a legacy server. Delivery
+// receipts use this so clients never mistake zero delivered comments for an
+// unknown receipt and fall back to the enqueue-time plan.
+func uuidStringsOrEmpty(us []pgtype.UUID) []string {
+	out := uuidsToStrings(us)
+	if out == nil {
+		return []string{}
+	}
+	return out
+}
+
+func int8ToPtr(v pgtype.Int8) *int64 { return util.Int8ToPtr(v) }
+func int4ToPtr(v pgtype.Int4) *int32 { return util.Int4ToPtr(v) }
+func ptrToInt4(v *int32) pgtype.Int4 { return util.PtrToInt4(v) }
 
 // parseUUIDOrBadRequest validates a UUID string sourced from user input
 // (URL params, request body, headers). On invalid input it writes a 400

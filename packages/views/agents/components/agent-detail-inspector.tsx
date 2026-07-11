@@ -2,12 +2,10 @@
 
 import {
   useEffect,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { Camera, Loader2, Pencil } from "lucide-react";
-import { toast } from "sonner";
+import { Loader2, Pencil } from "lucide-react";
 import type {
   Agent,
   AgentRuntime,
@@ -17,12 +15,11 @@ import {
   AGENT_DESCRIPTION_MAX_LENGTH,
   type AgentPresenceDetail,
 } from "@multica/core/agents";
-import { api } from "@multica/core/api";
-import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
 import { useTimeAgo } from "../../i18n";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { AvatarUploadControl } from "../../common/avatar-upload-control";
 import { Input } from "@multica/ui/components/ui/input";
 import {
   Dialog,
@@ -45,8 +42,9 @@ import { ModelPicker } from "./inspector/model-picker";
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { SkillAttach } from "./inspector/skill-attach";
 import { ThinkingPropRow } from "./inspector/thinking-prop-row";
-import { VisibilityPicker } from "./inspector/visibility-picker";
+import { AccessPicker } from "./inspector/access-picker";
 import { LarkAgentBindButton } from "../../settings/components/lark-tab";
+import { SlackAgentBindButton } from "../../settings/components/slack-tab";
 
 interface InspectorProps {
   agent: Agent;
@@ -144,16 +142,29 @@ export function AgentDetailInspector({
         <ThinkingPropRow
           runtimeId={agent.runtime_id}
           runtimeOnline={!!isOnline}
+          provider={runtime?.provider ?? ""}
           model={agent.model ?? ""}
           value={agent.thinking_level ?? ""}
           canEdit={canEdit}
           onChange={(v) => update({ thinking_level: v })}
         />
         <PropRow label={t(($) => $.inspector.prop_visibility)} interactive={false}>
-          <VisibilityPicker
-            value={agent.visibility}
-            canEdit={canEdit}
-            onChange={(v) => update({ visibility: v })}
+          <AccessPicker
+            permissionMode={agent.permission_mode}
+            invocationTargets={agent.invocation_targets}
+            visibility={agent.visibility}
+            members={members}
+            // Access is OWNER-ONLY (MUL-3963): a workspace admin can edit other
+            // agent properties (canEdit) but NOT who may run the agent. Gate the
+            // picker on ownership specifically so non-owners get the read-only
+            // state instead of a control the backend would reject with 403.
+            canEdit={
+              currentUserId !== null && agent.owner_id === currentUserId
+            }
+            hasComposioAllowlist={
+              (agent.composio_toolkit_allowlist ?? []).length > 0
+            }
+            onChange={(next) => update(next)}
           />
         </PropRow>
         <PropRow label={t(($) => $.inspector.prop_concurrency)} interactive={false}>
@@ -173,7 +184,7 @@ export function AgentDetailInspector({
               <ActorAvatar
                 actorType="member"
                 actorId={owner.user_id}
-                size={14}
+                size="xs"
               />
               <span className="truncate">{owner.name}</span>
             </span>
@@ -215,13 +226,12 @@ export function AgentDetailInspector({
       </div>
 
       {/* Integrations — surfaces external-channel bind entry points
-          (Lark Bot today; Slack / Discord in the future). The bind
-          button self-hides when the server-side device-flow install
-          capability gate is closed, so this section may render empty
-          on deployments without a configured Lark app — that's
-          intentional and matches the "don't surface a flow that will
-          fail" guarantee. We only mount it for editors: viewers
-          shouldn't see a CTA they can't action. */}
+          (Lark + Slack today; Discord in the future). Each bind button
+          self-hides when its server-side install capability gate is
+          closed, so this section may render empty on deployments without
+          a configured channel — that's intentional and matches the
+          "don't surface a flow that will fail" guarantee. We only mount
+          it for editors: viewers shouldn't see a CTA they can't action. */}
       {canEdit && (
         <div className="flex flex-col px-5 py-4">
           <div className="mb-2 flex items-center gap-2">
@@ -231,6 +241,12 @@ export function AgentDetailInspector({
           </div>
           <div className="flex flex-wrap gap-2">
             <LarkAgentBindButton
+              agentId={agent.id}
+              agentName={agent.name}
+              agentOwnerId={agent.owner_id}
+              onShowConnectedDetails={onShowIntegrations}
+            />
+            <SlackAgentBindButton
               agentId={agent.id}
               agentName={agent.name}
               onShowConnectedDetails={onShowIntegrations}
@@ -278,70 +294,22 @@ function AvatarEditor({
   canEdit: boolean;
   onUpdate: (data: Record<string, unknown>) => Promise<void>;
 }) {
-  const { t } = useT("agents");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const { upload, uploading } = useFileUpload(api);
-
   if (!canEdit) {
     return (
-      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg">
-        <ActorAvatar
-          actorType="agent"
-          actorId={agent.id}
-          size={56}
-          className="rounded-none"
-        />
+      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-full">
+        <ActorAvatar actorType="agent" actorId={agent.id} size="2xl" />
       </div>
     );
   }
 
-  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-    try {
-      const result = await upload(file);
-      if (!result) return;
-      await onUpdate({ avatar_url: result.link });
-      toast.success(t(($) => $.inspector.avatar_updated_toast));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t(($) => $.inspector.avatar_upload_failed_toast));
-    }
-  };
-
   return (
-    <>
-      <button
-        type="button"
-        // rounded-lg matches the standard agent avatar treatment used in
-        // list rows. Avoid rounded-full — circles are reserved for humans.
-        className="group relative h-14 w-14 shrink-0 overflow-hidden rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        onClick={() => fileInputRef.current?.click()}
-        disabled={uploading}
-        aria-label={t(($) => $.inspector.change_avatar_aria)}
-      >
-        <ActorAvatar
-          actorType="agent"
-          actorId={agent.id}
-          size={56}
-          className="rounded-none"
-        />
-        <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
-          {uploading ? (
-            <Loader2 className="h-4 w-4 animate-spin text-white" />
-          ) : (
-            <Camera className="h-4 w-4 text-white" />
-          )}
-        </div>
-      </button>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleFile}
-      />
-    </>
+    <AvatarUploadControl
+      variant="agent"
+      value={agent.avatar_url ?? null}
+      name={agent.name}
+      size={56}
+      onUploaded={(url) => onUpdate({ avatar_url: url })}
+    />
   );
 }
 

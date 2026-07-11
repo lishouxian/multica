@@ -465,6 +465,66 @@ describe("RuntimeLocalSkillImportPanel", () => {
     expect(await screen.findByText("Updated")).toBeInTheDocument();
   });
 
+  it("applies a single creator conflict when clicking overwrite", async () => {
+    mockResolveRuntimeLocalSkillImport
+      .mockResolvedValueOnce({
+        status: "conflict",
+        conflict: {
+          existing_skill_id: "existing-skill-1",
+          existing_created_by: "user-1",
+          can_overwrite: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        status: "updated",
+        skill: {
+          ...MOCK_IMPORTED_SKILL_A,
+          id: "existing-skill-1",
+        },
+      });
+
+    renderPanel();
+
+    expect(
+      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
+
+    const importButton = screen.getByRole("button", {
+      name: /Import to Workspace/i,
+    });
+    await waitFor(() => expect(importButton).not.toBeDisabled(), {
+      timeout: 5000,
+    });
+    fireEvent.click(importButton);
+
+    expect(
+      await screen.findByText(/A skill with this name already exists/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Overwrite$/i }));
+
+    await waitFor(
+      () => {
+        expect(mockResolveRuntimeLocalSkillImport).toHaveBeenLastCalledWith(
+          "runtime-1",
+          {
+            skill_key: "review-helper",
+            name: "Review Helper",
+            description: "Review pull requests",
+            supports_conflict: true,
+            action: "overwrite",
+            target_skill_id: "existing-skill-1",
+          },
+        );
+      },
+      { timeout: 5000 },
+    );
+
+    expect(await screen.findByText("Updated")).toBeInTheDocument();
+  });
+
   it("keeps bulk completion behavior when conflict resolution leaves one success", async () => {
     mockRuntimeLocalSkillsOptions.mockReturnValue({
       queryKey: ["runtimes", "local-skills", "runtime-1"],

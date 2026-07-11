@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -40,8 +41,8 @@ type Model struct {
 }
 
 // ModelThinking carries the per-model reasoning/effort catalog
-// surfaced by an agent runtime. Values are runtime-native — Codex
-// emits "none|minimal|low|medium|high|xhigh"; Claude emits
+// surfaced by an agent runtime. Values are runtime-native — Codex can emit
+// "none|minimal|low|medium|high|xhigh|max|ultra"; Claude emits
 // "low|medium|high|xhigh|max". The frontend renders SupportedLevels
 // as-is so what users see matches each CLI's own UI.
 type ModelThinking struct {
@@ -79,14 +80,14 @@ const modelCacheTTL = 60 * time.Second
 
 // ListModels returns the models supported by the given agent provider.
 // For providers with a known static catalog it returns the baked-in
-// list; for providers with a CLI discovery mechanism (opencode, pi,
-// openclaw) it shells out with caching and falls back to the static
-// list on failure.
+// list; for providers with a CLI discovery mechanism (codex, opencode,
+// pi, openclaw) it shells out with caching and falls back where the
+// provider has a safe static catalog.
 //
 // For claude, codex, and opencode, the catalog is augmented with per-model
-// thinking-level options discovered from the local CLI. Discovery failures
-// silently leave Thinking == nil on each entry, which the UI treats as
-// "no picker for this model" rather than blocking model selection.
+// thinking-level options discovered from the local CLI. Codex discovery
+// failures fall back to a model + thinking snapshot; providers without a safe
+// fallback leave Thinking nil, which makes the UI hide the thinking picker.
 //
 // executablePath lets the caller point at a non-default binary; pass
 // "" to use the provider's default name on PATH.
@@ -97,17 +98,22 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 		annotateClaudeThinking(ctx, models, executablePath)
 		return models, nil
 	case "codex":
-		models := codexStaticModels()
-		annotateCodexThinking(ctx, models, executablePath)
-		return models, nil
-	case "gemini":
-		return geminiStaticModels(), nil
+		return cachedDiscovery(discoveryCacheKey(providerType, executablePath), func() ([]Model, error) {
+			return discoverCodexModels(ctx, executablePath), nil
+		})
 	case "antigravity":
 		// agy 1.0.6 added a `--model` flag plus an `agy models` catalog
 		// command (MUL-3125). Enumerate it on demand like the other
 		// dynamic-discovery backends.
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			return discoverAntigravityModels(ctx, executablePath)
+		})
+	case "traecli":
+		// Official TRAE CLI is ACP-native: it returns its model catalog from
+		// session/new. Enumerate it on demand like the other ACP backends
+		// (requires a logged-in traecli; falls back to manual entry on error).
+		return cachedDiscovery(providerType, func() ([]Model, error) {
+			return discoverTraecliModels(ctx, executablePath)
 		})
 	case "cursor":
 		return cachedDiscovery(providerType, func() ([]Model, error) {
@@ -129,6 +135,10 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			return discoverKiroModels(ctx, executablePath)
 		})
+	case "qoder":
+		return cachedDiscovery(providerType, func() ([]Model, error) {
+			return discoverQoderModels(ctx, executablePath)
+		})
 	case "opencode":
 		return cachedDiscovery(discoveryCacheKey(providerType, executablePath), func() ([]Model, error) {
 			return discoverOpenCodeModels(ctx, executablePath)
@@ -140,6 +150,15 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 	case "openclaw":
 		return cachedDiscovery(providerType, func() ([]Model, error) {
 			return discoverOpenclawAgents(ctx, executablePath)
+		})
+	case "codebuddy":
+		return cachedDiscovery(providerType, func() ([]Model, error) {
+			models, err := discoverCodebuddyModels(ctx, executablePath)
+			if err != nil {
+				return nil, err
+			}
+			annotateCodebuddyThinking(ctx, models, executablePath)
+			return models, nil
 		})
 	default:
 		return nil, fmt.Errorf("unknown agent type: %q", providerType)
@@ -160,6 +179,64 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 // dropdown plus a silently-ignored manual-entry field.
 func ModelSelectionSupported(providerType string) bool {
 	return true
+}
+
+// ModelKnownIncompatibleWithProvider reports whether a saved model is a known
+// mismatch for a target runtime provider. For first-party providers with
+// maintained static catalogs, compatibility is exact: the model must be one of
+// the IDs that runtime advertises. Unknown/custom model strings still return
+// false because the UI and CLI allow manual entries and the server should not
+// erase values it cannot confidently classify.
+func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+
+	accepted, ok := acceptedModelIDsForProvider(providerType)
+	if !ok {
+		return false
+	}
+	if accepted[model] {
+		return false
+	}
+	return isRuntimeSpecificModelID(model)
+}
+
+func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {
+	switch {
+	case providerType == "claude":
+		return modelIDSet(claudeStaticModels()), true
+	case providerType == "codex":
+		return modelIDSet(codexStaticModels()), true
+	default:
+		return nil, false
+	}
+}
+
+func modelIDSet(models []Model) map[string]bool {
+	out := make(map[string]bool, len(models))
+	for _, m := range models {
+		out[m.ID] = true
+	}
+	return out
+}
+
+func isRuntimeSpecificModelID(model string) bool {
+	if strings.Contains(model, "/") {
+		return true
+	}
+	return modelHasKnownPrefix(model) ||
+		modelIDSet(claudeStaticModels())[model] ||
+		modelIDSet(codexStaticModels())[model]
+}
+
+func modelHasKnownPrefix(model string) bool {
+	return strings.HasPrefix(model, "claude-") ||
+		strings.HasPrefix(model, "gpt-") ||
+		strings.HasPrefix(model, "gemini-") ||
+		strings.HasPrefix(model, "auto-gemini-") ||
+		isOpenAIReasoningSeriesID(model)
 }
 
 // cachedDiscovery invokes fn and caches the result for modelCacheTTL.
@@ -210,6 +287,7 @@ func discoveryCacheKey(providerType, executablePath string) string {
 // the everyday workhorse (Opus is reserved for advisor-style flows).
 func claudeStaticModels() []Model {
 	return []Model{
+		{ID: "claude-sonnet-5", Label: "Claude Sonnet 5", Provider: "anthropic"},
 		{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
 		{ID: "claude-fable-5", Label: "Claude Fable 5", Provider: "anthropic"},
 		{ID: "claude-opus-4-8", Label: "Claude Opus 4.8", Provider: "anthropic"},
@@ -220,42 +298,72 @@ func claudeStaticModels() []Model {
 	}
 }
 
+// codexStaticModels is the fallback for Codex versions older than 0.122.0
+// and for failed/malformed `codex debug models --bundled` calls. Keep it in
+// sync with the visible entries in the newest locally verified bundled
+// catalog, plus still-common models from older Codex releases. Each entry
+// carries its own reasoning catalog so old/offline CLIs retain the same model
+// + thinking picker contract as dynamic discovery.
 func codexStaticModels() []Model {
+	// `Default` here is NOT a user-facing "default model" badge — the picker
+	// stopped rendering that (Multica follows the CLI config when the model is
+	// unset). It only marks the current flagship for the "default must track
+	// the latest release" catalog guard
+	// (TestCodexStaticModelsMatchVerifiedFallbackCatalog,
+	// multica#2009). It is deliberately NOT used to validate effort for an
+	// empty (follow-CLI-config) model: that config can resolve to any model,
+	// so ValidateThinkingLevel fails an empty codex model closed rather than
+	// borrowing this entry's catalog (which alone advertises `ultra`) — see
+	// ValidateThinkingLevel and MUL-4347. Keep exactly one entry flagged.
+	standardThinking := func(defaultLevel string, includeMax, includeUltra bool) *ModelThinking {
+		levels := []ThinkingLevel{
+			{Value: "low", Label: "Low", Description: "Fast responses with lighter reasoning"},
+			{Value: "medium", Label: "Medium", Description: "Balances speed and reasoning depth for everyday tasks"},
+			{Value: "high", Label: "High", Description: "Greater reasoning depth for complex problems"},
+			{Value: "xhigh", Label: "Extra high", Description: "Extra high reasoning depth for complex problems"},
+		}
+		if includeMax {
+			levels = append(levels, ThinkingLevel{Value: "max", Label: "Max", Description: "Maximum reasoning depth for the hardest problems"})
+		}
+		if includeUltra {
+			levels = append(levels, ThinkingLevel{Value: "ultra", Label: "Ultra", Description: "Maximum reasoning with automatic task delegation"})
+		}
+		return &ModelThinking{DefaultLevel: defaultLevel, SupportedLevels: levels}
+	}
+	gpt52Thinking := func() *ModelThinking {
+		return &ModelThinking{
+			DefaultLevel: "medium",
+			SupportedLevels: []ThinkingLevel{
+				{Value: "low", Label: "Low", Description: "Balances speed with some reasoning; useful for straightforward queries and short explanations"},
+				{Value: "medium", Label: "Medium", Description: "Provides a solid balance of reasoning depth and latency for general-purpose tasks"},
+				{Value: "high", Label: "High", Description: "Maximizes reasoning depth for complex or ambiguous problems"},
+				{Value: "xhigh", Label: "Extra high", Description: "Extra high reasoning for complex problems"},
+			},
+		}
+	}
 	return []Model{
-		{ID: "gpt-5.5", Label: "GPT-5.5", Provider: "openai", Default: true},
-		{ID: "gpt-5.5-mini", Label: "GPT-5.5 mini", Provider: "openai"},
-		{ID: "gpt-5.4", Label: "GPT-5.4", Provider: "openai"},
-		{ID: "gpt-5.4-mini", Label: "GPT-5.4 mini", Provider: "openai"},
-		{ID: "gpt-5.3-codex", Label: "GPT-5.3 Codex", Provider: "openai"},
-		{ID: "gpt-5", Label: "GPT-5", Provider: "openai"},
-		{ID: "o3", Label: "o3", Provider: "openai"},
-		{ID: "o3-mini", Label: "o3-mini", Provider: "openai"},
+		{ID: "gpt-5.6-sol", Label: "GPT-5.6-Sol", Provider: "openai", Default: true, Thinking: standardThinking("low", true, true)},
+		{ID: "gpt-5.6-terra", Label: "GPT-5.6-Terra", Provider: "openai", Thinking: standardThinking("medium", true, true)},
+		{ID: "gpt-5.6-luna", Label: "GPT-5.6-Luna", Provider: "openai", Thinking: standardThinking("medium", true, false)},
+		{ID: "gpt-5.5", Label: "GPT-5.5", Provider: "openai", Thinking: standardThinking("medium", false, false)},
+		{ID: "gpt-5.4", Label: "GPT-5.4", Provider: "openai", Thinking: standardThinking("medium", false, false)},
+		{ID: "gpt-5.4-mini", Label: "GPT-5.4-Mini", Provider: "openai", Thinking: standardThinking("medium", false, false)},
+		{ID: "gpt-5.3-codex", Label: "GPT-5.3-Codex", Provider: "openai", Thinking: standardThinking("medium", false, false)},
+		{ID: "gpt-5.2", Label: "GPT-5.2", Provider: "openai", Thinking: gpt52Thinking()},
 	}
 }
 
-// geminiStaticModels lists the values we pass via `gemini -m`. Gemini
-// CLI has no `models list` subcommand, so dynamic discovery isn't
-// possible; the next best thing is to expose the CLI's own aliases
-// (auto / pro / flash / flash-lite and the `auto-gemini-*` family)
-// alongside a few explicit version pins. Aliases track whatever the
-// installed CLI considers current (see `resolveModel` in the CLI's
-// packages/core/src/config/models.ts), so new Gemini releases light
-// up without a Multica redeploy. Default is `auto` to match Google's
-// recommendation — the CLI picks Pro vs Flash per task and falls back
-// when quota is exhausted.
-func geminiStaticModels() []Model {
-	return []Model{
-		{ID: "auto", Label: "Auto (Gemini 3)", Provider: "google", Default: true},
-		{ID: "auto-gemini-2.5", Label: "Auto (Gemini 2.5)", Provider: "google"},
-		{ID: "pro", Label: "Pro", Provider: "google"},
-		{ID: "flash", Label: "Flash", Provider: "google"},
-		{ID: "flash-lite", Label: "Flash Lite", Provider: "google"},
-		{ID: "gemini-3-pro-preview", Label: "Gemini 3 Pro (preview)", Provider: "google"},
-		{ID: "gemini-3-flash-preview", Label: "Gemini 3 Flash (preview)", Provider: "google"},
-		{ID: "gemini-2.5-pro", Label: "Gemini 2.5 Pro", Provider: "google"},
-		{ID: "gemini-2.5-flash", Label: "Gemini 2.5 Flash", Provider: "google"},
-		{ID: "gemini-2.5-flash-lite", Label: "Gemini 2.5 Flash Lite", Provider: "google"},
-	}
+// discoverTraecliModels spins up a throwaway `traecli acp serve --yolo` process
+// and parses the model catalog traecli returns from session/new (same shape as
+// Kiro/Qoder). The official TRAE CLI must be logged in for the catalog to be
+// non-empty; on any failure the caller falls back to the manual-entry field.
+func discoverTraecliModels(ctx context.Context, executablePath string) ([]Model, error) {
+	return discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+		defaultBin:   "traecli",
+		clientName:   "multica-model-discovery",
+		tmpdirPrefix: "multica-traecli-discovery-",
+		acpArgs:      []string{"acp", "serve", "--yolo"},
+	})
 }
 
 // cursorStaticModels is a minimal fallback used when
@@ -757,6 +865,16 @@ func discoverCopilotModels(ctx context.Context, executablePath string) ([]Model,
 	return models, nil
 }
 
+// discoverQoderModels spins up `qodercli --yolo --acp` and parses models from session/new.
+func discoverQoderModels(ctx context.Context, executablePath string) ([]Model, error) {
+	return discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+		defaultBin:   "qodercli",
+		clientName:   "multica-model-discovery",
+		acpArgs:      []string{"--yolo", "--acp"},
+		tmpdirPrefix: "multica-qoder-discovery-",
+	})
+}
+
 // acpDiscoveryProvider configures how discoverACPModels launches an
 // ACP-speaking agent CLI. The shared helper drives every CLI in
 // the same way (initialize → session/new → parse models block) — the
@@ -778,9 +896,8 @@ type acpDiscoveryProvider struct {
 // discoverACPModels runs the ACP handshake for any agent CLI that
 // implements the standard `initialize` + `session/new` flow and
 // advertises its model catalog in the response under
-// `models.availableModels` / `models.currentModelId`. This covers
-// Hermes and Kimi today; future ACP backends can plug in by adding
-// an acpDiscoveryProvider entry instead of duplicating the loop.
+// `models.availableModels` / `models.currentModelId`. Provider-specific
+// `launchArgs` select ACP mode (e.g. `acp` vs `--acp`).
 func discoverACPModels(ctx context.Context, executablePath string, p acpDiscoveryProvider) ([]Model, error) {
 	if executablePath == "" {
 		executablePath = p.defaultBin
@@ -1306,4 +1423,112 @@ func isOpenclawIdentifier(s string) bool {
 		}
 	}
 	return true
+}
+
+// ── CodeBuddy model discovery ──
+
+// codebuddyModelRe matches the `--model <model> ... Currently supported: (m1, m2, ...)`
+// line in `codebuddy --help` output.
+var codebuddyModelRe = regexp.MustCompile(`--model\s*<[^>]+>\s*.*?Currently supported:\s*\(([^)]+)\)`)
+
+// discoverCodebuddyModels runs `codebuddy --help` and extracts the
+// supported model list from its output. Falls back to a static list
+// when the binary is missing or the output cannot be parsed.
+func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Model, error) {
+	if executablePath == "" {
+		executablePath = "codebuddy"
+	}
+	if _, err := exec.LookPath(executablePath); err != nil {
+		return codebuddyStaticModels(), nil
+	}
+	helpOut := codebuddyHelpOutput(ctx, executablePath)
+	if helpOut == "" {
+		return codebuddyStaticModels(), nil
+	}
+	models := parseCodebuddyModels(helpOut)
+	if len(models) == 0 {
+		return codebuddyStaticModels(), nil
+	}
+	return models, nil
+}
+
+// parseCodebuddyModels extracts model IDs from codebuddy --help output.
+// The help text contains a line like:
+//
+//	--model <model>  ... Currently supported: (model1, model2, ...)
+//
+// The first model in the list is marked as default.
+func parseCodebuddyModels(helpOutput string) []Model {
+	match := codebuddyModelRe.FindStringSubmatch(helpOutput)
+	if len(match) < 2 {
+		return nil
+	}
+	raw := strings.Split(match[1], ",")
+	var models []Model
+	for _, s := range raw {
+		id := strings.TrimSpace(s)
+		if id == "" {
+			continue
+		}
+		models = append(models, Model{
+			ID:       id,
+			Label:    codebuddyModelLabel(id),
+			Provider: codebuddyModelProvider(id),
+			Default:  len(models) == 0,
+		})
+	}
+	return models
+}
+
+// codebuddyModelProvider infers a provider name from a model ID prefix.
+func codebuddyModelProvider(id string) string {
+	switch {
+	case strings.HasPrefix(id, "claude-"):
+		return "anthropic"
+	case strings.HasPrefix(id, "gemini-"):
+		return "google"
+	case strings.HasPrefix(id, "gpt-"):
+		return "openai"
+	case strings.HasPrefix(id, "glm-"):
+		return "zhipu"
+	case strings.HasPrefix(id, "minimax-"):
+		return "minimax"
+	case strings.HasPrefix(id, "kimi-"):
+		return "kimi"
+	case len(id) >= 3 && id[0] == 'h' && id[1] == 'y' && id[2] >= '0' && id[2] <= '9':
+		return "hunyuan"
+	case strings.HasPrefix(id, "deepseek-"):
+		return "deepseek"
+	default:
+		return ""
+	}
+}
+
+// codebuddyModelLabel generates a human-readable label from a model ID.
+// Capitalizes each dash-separated part; special-cases GPT/GLM to uppercase
+// and rewrites the "-ioa" suffix as "IOA".
+func codebuddyModelLabel(id string) string {
+	parts := strings.Split(id, "-")
+	for i, p := range parts {
+		if strings.EqualFold(p, "gpt") || strings.EqualFold(p, "glm") {
+			parts[i] = strings.ToUpper(p)
+		} else if strings.EqualFold(p, "ioa") {
+			parts[i] = "IOA"
+		} else if len(p) > 0 {
+			parts[i] = strings.ToUpper(p[:1]) + p[1:]
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// codebuddyStaticModels is the fallback catalog when dynamic discovery
+// fails (binary missing, parse error, timeout).
+func codebuddyStaticModels() []Model {
+	return []Model{
+		{ID: "claude-sonnet-4.6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
+		{ID: "claude-opus-4.7", Label: "Claude Opus 4.7", Provider: "anthropic"},
+		{ID: "gemini-3.1-pro", Label: "Gemini 3.1 Pro", Provider: "google"},
+		{ID: "gpt-5.5", Label: "GPT 5.5", Provider: "openai"},
+		{ID: "deepseek-v3-2-volc-ioa", Label: "Deepseek V3 2 Volc IOA", Provider: "deepseek"},
+	}
 }

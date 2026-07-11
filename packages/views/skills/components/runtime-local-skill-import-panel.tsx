@@ -307,12 +307,14 @@ function ConflictResolutionPanel({
   conflicts,
   resolutions,
   onChange,
+  onResolveNow,
   onOverwriteAll,
   onSkipAll,
 }: {
   conflicts: BulkImportResult[];
   resolutions: Record<string, ConflictResolutionState>;
   onChange: (key: string, next: ConflictResolutionState) => void;
+  onResolveNow?: (key: string, next: ConflictResolutionState) => void;
   onOverwriteAll: () => void;
   onSkipAll: () => void;
 }) {
@@ -401,12 +403,17 @@ function ConflictResolutionPanel({
                   variant={
                     resolution.action === "overwrite" ? "default" : "outline"
                   }
-                  onClick={() =>
-                    onChange(r.key, {
+                  onClick={() => {
+                    const next = {
                       action: "overwrite",
                       renameName: resolution.renameName,
-                    })
-                  }
+                    } satisfies ConflictResolutionState;
+                    if (single && r.conflict?.can_overwrite && onResolveNow) {
+                      onResolveNow(r.key, next);
+                    } else {
+                      onChange(r.key, next);
+                    }
+                  }}
                   disabled={!r.conflict?.can_overwrite}
                 >
                   <RefreshCw className="h-3 w-3" />
@@ -723,7 +730,9 @@ export function RuntimeLocalSkillImportPanel({
     }));
   };
 
-  const handleApplyConflictResolutions = async () => {
+  const handleApplyConflictResolutions = async (
+    resolutionOverrides: Record<string, ConflictResolutionState> = {},
+  ) => {
     if (!selectedRuntimeId || pendingConflicts.length === 0) return;
 
     const conflicts = [...pendingConflicts];
@@ -748,7 +757,8 @@ export function RuntimeLocalSkillImportPanel({
     }));
 
     for (const r of conflicts) {
-      const resolution = conflictResolutions[r.key];
+      const resolution =
+        resolutionOverrides[r.key] ?? conflictResolutions[r.key];
       if (!resolution) {
         applyResult(r.key, {
           status: "failed",
@@ -893,6 +903,10 @@ export function RuntimeLocalSkillImportPanel({
           conflicts={pendingConflicts}
           resolutions={conflictResolutions}
           onChange={setConflictResolution}
+          onResolveNow={(key, next) => {
+            setConflictResolution(key, next);
+            void handleApplyConflictResolutions({ [key]: next });
+          }}
           onOverwriteAll={() => {
             setConflictResolutions((prev) => {
               const next = { ...prev };
@@ -1143,7 +1157,7 @@ export function RuntimeLocalSkillImportPanel({
             <Button
               type="button"
               size="sm"
-              onClick={handleApplyConflictResolutions}
+              onClick={() => void handleApplyConflictResolutions()}
               disabled={!canApplyConflictResolutions}
             >
               {t(($) => $.runtime_import.conflict_apply_button)}

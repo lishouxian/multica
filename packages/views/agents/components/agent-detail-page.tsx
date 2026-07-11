@@ -301,6 +301,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           agent={agent}
           runtimes={runtimes}
           onUpdate={handleUpdate}
+          currentUserId={currentUser?.id ?? null}
           navIntent={tabNavIntent}
           onNavIntentHandled={() => setTabNavIntent(null)}
         />
@@ -401,7 +402,7 @@ function DetailHeader({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-auto">
               <DropdownMenuItem
-                className="text-destructive"
+                variant="destructive"
                 onClick={onArchive}
               >
                 <Trash2 className="h-3.5 w-3.5" />
@@ -439,7 +440,7 @@ function DetailLoadingSkeleton() {
       </PageHeader>
       <div className="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto p-3 md:grid md:grid-cols-[320px_minmax(0,1fr)] md:gap-4 md:overflow-hidden md:p-6">
         <div className="flex flex-col gap-4 rounded-lg border p-5">
-          <Skeleton className="h-14 w-14 rounded-lg" />
+          <Skeleton className="h-14 w-14 rounded-full" />
           <Skeleton className="h-5 w-40" />
           <Skeleton className="h-3 w-full" />
           <div className="space-y-2">
