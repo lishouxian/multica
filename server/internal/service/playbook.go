@@ -21,8 +21,10 @@ import (
 )
 
 const (
-	maxPlaybookSteps   = 32
-	defaultMaxAttempts = 2
+	maxPlaybookSteps      = 32
+	defaultMaxAttempts    = 2
+	defaultMaxTransitions = 32
+	maximumMaxTransitions = 100
 )
 
 var playbookStepKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
@@ -31,8 +33,10 @@ var playbookStepKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 // Dependencies model both serial handoffs and wait-all joins. A condition on a
 // dependency models an enum branch without adding a general expression engine.
 type PlaybookDefinition struct {
-	Version int            `json:"version"`
-	Steps   []PlaybookStep `json:"steps"`
+	Version        int            `json:"version"`
+	Start          string         `json:"start,omitempty"`
+	MaxTransitions int            `json:"max_transitions,omitempty"`
+	Steps          []PlaybookStep `json:"steps"`
 }
 
 type PlaybookStep struct {
@@ -44,7 +48,19 @@ type PlaybookStep struct {
 	Input        map[string]InputBinding `json:"input,omitempty"`
 	OutputSchema ValueSchema             `json:"output_schema"`
 	When         *StepCondition          `json:"when,omitempty"`
+	Transitions  []PlaybookTransition    `json:"transitions,omitempty"`
 	MaxAttempts  int                     `json:"max_attempts,omitempty"`
+}
+
+type PlaybookTransition struct {
+	To   string               `json:"to,omitempty"`
+	End  bool                 `json:"end,omitempty"`
+	When *TransitionCondition `json:"when,omitempty"`
+}
+
+type TransitionCondition struct {
+	Field  string          `json:"field"`
+	Equals json.RawMessage `json:"equals"`
 }
 
 type InputBinding struct {
@@ -118,6 +134,7 @@ func validatePlaybookShape(definition PlaybookDefinition) error {
 		return fmt.Errorf("playbook must contain between 1 and %d steps", maxPlaybookSteps)
 	}
 	steps := make(map[string]PlaybookStep, len(definition.Steps))
+	stateMachine := definition.Start != ""
 	for _, step := range definition.Steps {
 		if !playbookStepKeyPattern.MatchString(step.Key) {
 			return fmt.Errorf("invalid step key %q", step.Key)
@@ -137,7 +154,21 @@ func validatePlaybookShape(definition PlaybookDefinition) error {
 		if err := validateValueSchema(step.OutputSchema, "output_schema"); err != nil {
 			return fmt.Errorf("step %q: %w", step.Key, err)
 		}
+		if len(step.Transitions) > 0 {
+			stateMachine = true
+		}
 		steps[step.Key] = step
+	}
+	if stateMachine {
+		if definition.Start == "" {
+			return errors.New("state-machine playbook requires start")
+		}
+		if _, ok := steps[definition.Start]; !ok {
+			return fmt.Errorf("playbook start references unknown step %q", definition.Start)
+		}
+		if definition.MaxTransitions < 0 || definition.MaxTransitions > maximumMaxTransitions {
+			return fmt.Errorf("max_transitions must be 0 (default) or between 1 and %d", maximumMaxTransitions)
+		}
 	}
 
 	for _, step := range definition.Steps {
@@ -155,6 +186,9 @@ func validatePlaybookShape(definition PlaybookDefinition) error {
 			seenDependency[dependency] = true
 		}
 		if step.When != nil {
+			if stateMachine {
+				return fmt.Errorf("step %q cannot use dependency when in state-machine mode", step.Key)
+			}
 			if !seenDependency[step.When.Step] {
 				return fmt.Errorf("step %q condition must reference a direct dependency", step.Key)
 			}
@@ -164,6 +198,39 @@ func validatePlaybookShape(definition PlaybookDefinition) error {
 			var value any
 			if err := json.Unmarshal(step.When.Equals, &value); err != nil {
 				return fmt.Errorf("step %q condition equals is invalid JSON", step.Key)
+			}
+		}
+		if stateMachine {
+			if len(step.DependsOn) > 0 {
+				return fmt.Errorf("step %q cannot use depends_on in state-machine mode", step.Key)
+			}
+			if len(step.Transitions) == 0 {
+				return fmt.Errorf("step %q requires at least one transition", step.Key)
+			}
+			seenDefault := false
+			for index, transition := range step.Transitions {
+				if (transition.To == "") == !transition.End {
+					return fmt.Errorf("step %q transition %d requires exactly one of to or end", step.Key, index)
+				}
+				if transition.To != "" {
+					if _, ok := steps[transition.To]; !ok {
+						return fmt.Errorf("step %q transitions to unknown step %q", step.Key, transition.To)
+					}
+				}
+				if transition.When == nil {
+					if seenDefault || index != len(step.Transitions)-1 {
+						return fmt.Errorf("step %q unconditional transition must be unique and last", step.Key)
+					}
+					seenDefault = true
+					continue
+				}
+				if seenDefault || strings.TrimSpace(transition.When.Field) == "" || len(transition.When.Equals) == 0 {
+					return fmt.Errorf("step %q transition condition requires field and equals", step.Key)
+				}
+				var value any
+				if err := json.Unmarshal(transition.When.Equals, &value); err != nil {
+					return fmt.Errorf("step %q transition equals is invalid JSON", step.Key)
+				}
 			}
 		}
 		for name, binding := range step.Input {
@@ -180,8 +247,11 @@ func validatePlaybookShape(definition PlaybookDefinition) error {
 				if len(parts) < 2 {
 					return fmt.Errorf("step %q input %q has invalid from path", step.Key, name)
 				}
-				if parts[0] != "context" && !seenDependency[parts[0]] {
-					return fmt.Errorf("step %q input %q must read context or a direct dependency", step.Key, name)
+				if parts[0] != "context" {
+					_, declaredStep := steps[parts[0]]
+					if (stateMachine && !declaredStep) || (!stateMachine && !seenDependency[parts[0]]) {
+						return fmt.Errorf("step %q input %q reads unavailable step %q", step.Key, name, parts[0])
+					}
 				}
 			}
 			for _, raw := range []json.RawMessage{binding.Value, binding.Default} {
@@ -196,6 +266,9 @@ func validatePlaybookShape(definition PlaybookDefinition) error {
 		}
 	}
 
+	if stateMachine {
+		return nil
+	}
 	visiting := make(map[string]bool, len(steps))
 	visited := make(map[string]bool, len(steps))
 	var visit func(string) error
@@ -337,6 +410,11 @@ func (s *PlaybookService) StartRun(ctx context.Context, squad db.Squad, rootIssu
 	}
 	if runContext == nil {
 		return PlaybookRunSnapshot{}, errors.New("run context must be a JSON object")
+	}
+	delete(runContext, "_playbook")
+	contextRaw, err = json.Marshal(runContext)
+	if err != nil {
+		return PlaybookRunSnapshot{}, errors.New("run context could not be normalized")
 	}
 
 	run, err := s.Queries.CreateWorkflowRun(ctx, db.CreateWorkflowRunParams{
@@ -495,12 +573,16 @@ func (s *PlaybookService) HandleTaskCompleted(ctx context.Context, taskID pgtype
 		_, _ = s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "needs_attention"})
 		return nil
 	}
-	if _, err := s.Queries.MarkWorkflowNodeSucceeded(ctx, node.ID); err != nil {
+	completed, err := s.Queries.MarkWorkflowNodeSucceeded(ctx, node.ID)
+	if err != nil {
 		return fmt.Errorf("complete workflow step: %w", err)
 	}
 	definition, err := DecodePlaybookDefinition(run.DefinitionSnapshot)
 	if err != nil {
 		return err
+	}
+	if definition.Start != "" {
+		return s.advanceStateMachine(ctx, run, definition, completed)
 	}
 	return s.advance(ctx, run, definition)
 }
@@ -529,6 +611,9 @@ func (s *PlaybookService) HandleTaskFailed(ctx context.Context, taskID pgtype.UU
 }
 
 func (s *PlaybookService) advance(ctx context.Context, run db.WorkflowRun, definition PlaybookDefinition) error {
+	if definition.Start != "" {
+		return s.activateStateStep(ctx, run, definition, definition.Start)
+	}
 	for iteration := 0; iteration < len(definition.Steps)+1; iteration++ {
 		nodes, err := s.Queries.ListWorkflowNodeRuns(ctx, run.ID)
 		if err != nil {
@@ -602,6 +687,149 @@ func (s *PlaybookService) advance(ctx context.Context, run db.WorkflowRun, defin
 		}
 	}
 	return err
+}
+
+type playbookRuntimeState struct {
+	TransitionCount int                       `json:"transition_count"`
+	Trace           []playbookTransitionTrace `json:"trace,omitempty"`
+}
+
+type playbookTransitionTrace struct {
+	Sequence int             `json:"sequence"`
+	From     string          `json:"from"`
+	To       string          `json:"to,omitempty"`
+	End      bool            `json:"end,omitempty"`
+	Output   json.RawMessage `json:"output"`
+}
+
+func (s *PlaybookService) advanceStateMachine(ctx context.Context, run db.WorkflowRun, definition PlaybookDefinition, completed db.WorkflowNodeRun) error {
+	transition, matched, err := selectPlaybookTransition(definition, completed)
+	if err != nil {
+		return s.stopStateMachine(ctx, run, completed, err.Error())
+	}
+	if !matched {
+		return s.stopStateMachine(ctx, run, completed, fmt.Sprintf("step %q output matched no transition", completed.StepKey))
+	}
+
+	contextValue, state, err := decodePlaybookRuntimeState(run.Context)
+	if err != nil {
+		return s.stopStateMachine(ctx, run, completed, err.Error())
+	}
+	maxTransitions := definition.MaxTransitions
+	if maxTransitions == 0 {
+		maxTransitions = defaultMaxTransitions
+	}
+	if state.TransitionCount >= maxTransitions {
+		return s.stopStateMachine(ctx, run, completed, fmt.Sprintf("run exhausted max_transitions (%d)", maxTransitions))
+	}
+	state.TransitionCount++
+	state.Trace = append(state.Trace, playbookTransitionTrace{
+		Sequence: state.TransitionCount,
+		From:     completed.StepKey,
+		To:       transition.To,
+		End:      transition.End,
+		Output:   append(json.RawMessage(nil), completed.Output...),
+	})
+	contextValue["_playbook"] = state
+	contextRaw, err := json.Marshal(contextValue)
+	if err != nil {
+		return s.stopStateMachine(ctx, run, completed, "could not persist transition trace")
+	}
+	updatedRun, err := s.Queries.UpdateWorkflowRunContext(ctx, db.UpdateWorkflowRunContextParams{ID: run.ID, Context: contextRaw})
+	if err != nil {
+		return fmt.Errorf("persist playbook transition: %w", err)
+	}
+	if transition.End {
+		if _, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "succeeded"}); err != nil {
+			return err
+		}
+		s.projectRootIssueStatus(ctx, updatedRun, "in_review")
+		return nil
+	}
+	return s.activateStateStep(ctx, updatedRun, definition, transition.To)
+}
+
+func (s *PlaybookService) activateStateStep(ctx context.Context, run db.WorkflowRun, definition PlaybookDefinition, key string) error {
+	step, ok := findPlaybookStep(definition, key)
+	if !ok {
+		return fmt.Errorf("unknown state-machine step %q", key)
+	}
+	nodes, err := s.Queries.ListWorkflowNodeRuns(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	node := findNodeRun(nodes, key)
+	if !node.ID.Valid {
+		return fmt.Errorf("state-machine step %q has no node run", key)
+	}
+	maxAttempts := step.MaxAttempts
+	if maxAttempts == 0 {
+		maxAttempts = defaultMaxAttempts
+	}
+	if int(node.Attempt) >= maxAttempts {
+		return s.stopStateMachine(ctx, run, node, fmt.Sprintf("step %q exhausted max_attempts (%d)", key, maxAttempts))
+	}
+	input, err := s.materializeInput(run, step, nodes)
+	if err != nil {
+		return s.stopStateMachine(ctx, run, node, err.Error())
+	}
+	ready, err := s.Queries.ActivateWorkflowNode(ctx, db.ActivateWorkflowNodeParams{ID: node.ID, InputSnapshot: input})
+	if err != nil {
+		return fmt.Errorf("activate state-machine step %q: %w", key, err)
+	}
+	if err := s.dispatchReadyNode(ctx, run, step, ready, ready.AgentID); err != nil {
+		return s.stopStateMachine(ctx, run, ready, err.Error())
+	}
+	return nil
+}
+
+func (s *PlaybookService) stopStateMachine(ctx context.Context, run db.WorkflowRun, node db.WorkflowNodeRun, reason string) error {
+	if node.ID.Valid {
+		_, _ = s.Queries.MarkWorkflowNodeNeedsAttention(ctx, db.MarkWorkflowNodeNeedsAttentionParams{ID: node.ID, Error: reason})
+	}
+	_, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "needs_attention"})
+	return err
+}
+
+func selectPlaybookTransition(definition PlaybookDefinition, completed db.WorkflowNodeRun) (PlaybookTransition, bool, error) {
+	step, ok := findPlaybookStep(definition, completed.StepKey)
+	if !ok {
+		return PlaybookTransition{}, false, fmt.Errorf("unknown completed step %q", completed.StepKey)
+	}
+	var output any
+	if err := json.Unmarshal(completed.Output, &output); err != nil {
+		return PlaybookTransition{}, false, fmt.Errorf("step %q has invalid transition output", completed.StepKey)
+	}
+	for _, transition := range step.Transitions {
+		if transition.When == nil {
+			return transition, true, nil
+		}
+		actual, found := lookupJSONPath(output, strings.Split(transition.When.Field, "."))
+		if !found {
+			return PlaybookTransition{}, false, fmt.Errorf("step %q transition field %q is missing", completed.StepKey, transition.When.Field)
+		}
+		var expected any
+		_ = json.Unmarshal(transition.When.Equals, &expected)
+		if valuesEqual(actual, expected) {
+			return transition, true, nil
+		}
+	}
+	return PlaybookTransition{}, false, nil
+}
+
+func decodePlaybookRuntimeState(raw []byte) (map[string]any, playbookRuntimeState, error) {
+	var contextValue map[string]any
+	if err := json.Unmarshal(raw, &contextValue); err != nil || contextValue == nil {
+		return nil, playbookRuntimeState{}, errors.New("stored run context is invalid")
+	}
+	var state playbookRuntimeState
+	if runtimeValue, ok := contextValue["_playbook"]; ok {
+		runtimeRaw, _ := json.Marshal(runtimeValue)
+		if err := json.Unmarshal(runtimeRaw, &state); err != nil {
+			return nil, state, errors.New("stored playbook runtime state is invalid")
+		}
+	}
+	return contextValue, state, nil
 }
 
 func (s *PlaybookService) projectRootIssueStatus(ctx context.Context, run db.WorkflowRun, target string) {
@@ -734,12 +962,22 @@ func (s *PlaybookService) materializeInput(run db.WorkflowRun, step PlaybookStep
 	if err := json.Unmarshal(run.Context, &contextValue); err != nil {
 		return nil, errors.New("stored run context is invalid")
 	}
+	delete(contextValue, "_playbook")
 	byKey := make(map[string]db.WorkflowNodeRun, len(nodes))
-	upstream := make(map[string]any, len(step.DependsOn))
+	upstream := make(map[string]any, len(nodes))
 	for _, node := range nodes {
 		byKey[node.StepKey] = node
 	}
-	for _, dependency := range step.DependsOn {
+	sources := step.DependsOn
+	if len(step.Transitions) > 0 {
+		sources = make([]string, 0, len(nodes))
+		for _, node := range nodes {
+			if node.Output != nil {
+				sources = append(sources, node.StepKey)
+			}
+		}
+	}
+	for _, dependency := range sources {
 		node := byKey[dependency]
 		if node.Status == "skipped" {
 			continue
@@ -916,6 +1154,15 @@ func findPlaybookStep(definition PlaybookDefinition, key string) (PlaybookStep, 
 		}
 	}
 	return PlaybookStep{}, false
+}
+
+func findNodeRun(nodes []db.WorkflowNodeRun, key string) db.WorkflowNodeRun {
+	for _, node := range nodes {
+		if node.StepKey == key {
+			return node
+		}
+	}
+	return db.WorkflowNodeRun{}
 }
 
 func mustListNodes(ctx context.Context, queries *db.Queries, runID pgtype.UUID) []db.WorkflowNodeRun {

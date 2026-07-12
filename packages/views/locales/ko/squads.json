@@ -104,6 +104,7 @@
     "refresh_runs": "Run 새로고침",
     "run_issue": "Issue",
     "attempt": "시도",
+    "route_trace": "전환 기록",
     "retry_button": "재시도",
     "retry_started": "단계를 다시 디스패치했습니다",
     "retry_failed": "단계 재시도에 실패했습니다.",

@@ -57,6 +57,48 @@ func (q *Queries) AcceptWorkflowNodeOutput(ctx context.Context, arg AcceptWorkfl
 	return i, err
 }
 
+const activateWorkflowNode = `-- name: ActivateWorkflowNode :one
+UPDATE workflow_node_run SET
+    status = 'ready',
+    accepted_task_id = NULL,
+    output = NULL,
+    input_snapshot = $2,
+    error = '',
+    completed_at = NULL,
+    updated_at = now()
+WHERE id = $1 AND status IN ('pending', 'succeeded', 'skipped')
+RETURNING id, workflow_run_id, step_key, agent_id, issue_id, task_id, accepted_task_id, status, input_snapshot, output, output_schema_version, attempt, error, created_at, updated_at, completed_at
+`
+
+type ActivateWorkflowNodeParams struct {
+	ID            pgtype.UUID `json:"id"`
+	InputSnapshot []byte      `json:"input_snapshot"`
+}
+
+func (q *Queries) ActivateWorkflowNode(ctx context.Context, arg ActivateWorkflowNodeParams) (WorkflowNodeRun, error) {
+	row := q.db.QueryRow(ctx, activateWorkflowNode, arg.ID, arg.InputSnapshot)
+	var i WorkflowNodeRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowRunID,
+		&i.StepKey,
+		&i.AgentID,
+		&i.IssueID,
+		&i.TaskID,
+		&i.AcceptedTaskID,
+		&i.Status,
+		&i.InputSnapshot,
+		&i.Output,
+		&i.OutputSchemaVersion,
+		&i.Attempt,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
 const createWorkflowNodeRun = `-- name: CreateWorkflowNodeRun :one
 INSERT INTO workflow_node_run (workflow_run_id, step_key, agent_id)
 VALUES ($1, $2, $3)
@@ -630,7 +672,7 @@ UPDATE workflow_node_run SET
     status = 'needs_attention',
     error = $2,
     updated_at = now()
-WHERE id = $1 AND status IN ('pending', 'ready', 'running', 'failed')
+WHERE id = $1 AND status IN ('pending', 'ready', 'running', 'failed', 'succeeded')
 RETURNING id, workflow_run_id, step_key, agent_id, issue_id, task_id, accepted_task_id, status, input_snapshot, output, output_schema_version, attempt, error, created_at, updated_at, completed_at
 `
 
@@ -895,6 +937,40 @@ func (q *Queries) ResetWorkflowNodeForRetry(ctx context.Context, arg ResetWorkfl
 		&i.OutputSchemaVersion,
 		&i.Attempt,
 		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const updateWorkflowRunContext = `-- name: UpdateWorkflowRunContext :one
+UPDATE workflow_run SET
+    context = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, workflow_definition_id, workflow_definition_version, definition_snapshot, workspace_id, squad_id, root_issue_id, status, context, created_by, created_at, updated_at, completed_at
+`
+
+type UpdateWorkflowRunContextParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Context []byte      `json:"context"`
+}
+
+func (q *Queries) UpdateWorkflowRunContext(ctx context.Context, arg UpdateWorkflowRunContextParams) (WorkflowRun, error) {
+	row := q.db.QueryRow(ctx, updateWorkflowRunContext, arg.ID, arg.Context)
+	var i WorkflowRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowDefinitionID,
+		&i.WorkflowDefinitionVersion,
+		&i.DefinitionSnapshot,
+		&i.WorkspaceID,
+		&i.SquadID,
+		&i.RootIssueID,
+		&i.Status,
+		&i.Context,
+		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.CompletedAt,

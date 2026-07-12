@@ -185,6 +185,149 @@ func TestPlaybookSquadStructuredHandoffE2E(t *testing.T) {
 	}
 }
 
+// TestPlaybookStateMachineLoopE2E exercises explicit conditional back-edges:
+//
+//	design -> code -> unit -> integration -> end
+//	            ^       |          |
+//	            +--fail-+          +--code_issue-->
+//	^                              |
+//	+-------------design_issue-----+
+//
+// A target step reuses its Issue, creates a fresh task attempt, receives the
+// latest accepted outputs, and remains bounded by both max_attempts and the
+// run-wide max_transitions budget.
+func TestPlaybookStateMachineLoopE2E(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agents := make(map[string]string)
+	for _, name := range []string{"leader", "design", "code", "unit", "integration"} {
+		agents[name] = createHandlerTestAgent(t, "playbook-loop-"+name, nil)
+	}
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, 'Playbook Loop E2E Squad', '', $2, $3)
+		RETURNING id
+	`, testWorkspaceID, agents["leader"], testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	for role, agentID := range agents {
+		if _, err := testPool.Exec(ctx, `INSERT INTO squad_member (squad_id, member_type, member_id, role) VALUES ($1, 'agent', $2, $3)`, squadID, agentID, role); err != nil {
+			t.Fatalf("add %s: %v", role, err)
+		}
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'Playbook Loop E2E%'`, testWorkspaceID)
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	squad, err := testHandler.Queries.GetSquad(ctx, util.MustParseUUID(squadID))
+	if err != nil {
+		t.Fatalf("load squad: %v", err)
+	}
+	definition := fmt.Sprintf(`{
+	  "version":1,
+	  "start":"design",
+	  "max_transitions":16,
+	  "steps":[
+	    {
+	      "key":"design","title":"Playbook Loop E2E design","agent_id":%q,"max_attempts":3,
+	      "input":{"feedback":{"from":"integration.summary","default":"initial request"}},
+	      "transitions":[{"to":"code","when":{"field":"outcome","equals":"approved"}},{"to":"design","when":{"field":"outcome","equals":"revise"}}],
+	      "output_schema":{"type":"object","required":["outcome","plan"],"properties":{"outcome":{"type":"string","enum":["approved","revise"]},"plan":{"type":"string"}},"additional_properties":false}
+	    },
+	    {
+	      "key":"code","title":"Playbook Loop E2E code","agent_id":%q,"max_attempts":5,
+	      "input":{"plan":{"from":"design.plan"}},
+	      "transitions":[{"to":"design","when":{"field":"outcome","equals":"design_issue"}},{"to":"unit","when":{"field":"outcome","equals":"done"}}],
+	      "output_schema":{"type":"object","required":["outcome","commit"],"properties":{"outcome":{"type":"string","enum":["done","design_issue"]},"commit":{"type":"string"}},"additional_properties":false}
+	    },
+	    {
+	      "key":"unit","title":"Playbook Loop E2E unit","agent_id":%q,"max_attempts":5,
+	      "input":{"commit":{"from":"code.commit"}},
+	      "transitions":[{"to":"code","when":{"field":"outcome","equals":"fail"}},{"to":"integration","when":{"field":"outcome","equals":"pass"}}],
+	      "output_schema":{"type":"object","required":["outcome","summary"],"properties":{"outcome":{"type":"string","enum":["pass","fail"]},"summary":{"type":"string"}},"additional_properties":false}
+	    },
+	    {
+	      "key":"integration","title":"Playbook Loop E2E integration","agent_id":%q,"max_attempts":3,
+	      "input":{"unit_summary":{"from":"unit.summary"}},
+	      "transitions":[{"to":"design","when":{"field":"outcome","equals":"design_issue"}},{"to":"code","when":{"field":"outcome","equals":"code_issue"}},{"end":true,"when":{"field":"outcome","equals":"pass"}}],
+	      "output_schema":{"type":"object","required":["outcome","summary"],"properties":{"outcome":{"type":"string","enum":["pass","code_issue","design_issue"]},"summary":{"type":"string"}},"additional_properties":false}
+	    }
+	  ]
+	}`, agents["design"], agents["code"], agents["unit"], agents["integration"])
+	if _, err := testHandler.PlaybookService.SaveDefinition(ctx, squad, []byte(definition)); err != nil {
+		t.Fatalf("save playbook: %v", err)
+	}
+	squad, _ = testHandler.Queries.GetSquad(ctx, util.MustParseUUID(squadID))
+	rootResult, err := testHandler.IssueService.Create(ctx, service.IssueCreateParams{
+		WorkspaceID: util.MustParseUUID(testWorkspaceID), Title: "Playbook Loop E2E root",
+		Status: "backlog", Priority: "none", AssigneeType: pgtype.Text{String: "squad", Valid: true},
+		AssigneeID: squad.ID, CreatorType: "member", CreatorID: util.MustParseUUID(testUserID),
+	}, service.IssueCreateOpts{Platform: "test"})
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	snapshot, err := testHandler.PlaybookService.StartRun(ctx, squad, rootResult.Issue.ID, util.MustParseUUID(testUserID), []byte(`{"request":"ship feature"}`))
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	firstDesign := findNode(t, snapshot.Nodes, "design")
+	if firstDesign.Status != "running" || firstDesign.Attempt != 1 {
+		t.Fatalf("initial design = %s/%d", firstDesign.Status, firstDesign.Attempt)
+	}
+
+	snapshot = completePlaybookNode(t, snapshot, "design", `{"outcome":"approved","plan":"plan-v1"}`)
+	firstCode := findNode(t, snapshot.Nodes, "code")
+	snapshot = completePlaybookNode(t, snapshot, "code", `{"outcome":"done","commit":"commit-v1"}`)
+	snapshot = completePlaybookNode(t, snapshot, "unit", `{"outcome":"fail","summary":"assertion failed"}`)
+	secondCode := findNode(t, snapshot.Nodes, "code")
+	if secondCode.Status != "running" || secondCode.Attempt != 2 || secondCode.IssueID != firstCode.IssueID || secondCode.TaskID == firstCode.TaskID {
+		t.Fatalf("unit back-edge did not reuse code issue with a fresh attempt")
+	}
+
+	snapshot = completePlaybookNode(t, snapshot, "code", `{"outcome":"done","commit":"commit-v2"}`)
+	snapshot = completePlaybookNode(t, snapshot, "unit", `{"outcome":"pass","summary":"unit green"}`)
+	snapshot = completePlaybookNode(t, snapshot, "integration", `{"outcome":"design_issue","summary":"API contract is incomplete"}`)
+	secondDesign := findNode(t, snapshot.Nodes, "design")
+	if secondDesign.Status != "running" || secondDesign.Attempt != 2 || secondDesign.IssueID != firstDesign.IssueID {
+		t.Fatalf("integration back-edge did not revisit design")
+	}
+	var designInput struct {
+		Input map[string]any `json:"input"`
+	}
+	if err := json.Unmarshal(secondDesign.InputSnapshot, &designInput); err != nil || designInput.Input["feedback"] != "API contract is incomplete" {
+		t.Fatalf("revisited design input = %#v, err=%v", designInput.Input, err)
+	}
+
+	snapshot = completePlaybookNode(t, snapshot, "design", `{"outcome":"approved","plan":"plan-v2"}`)
+	snapshot = completePlaybookNode(t, snapshot, "code", `{"outcome":"done","commit":"commit-v3"}`)
+	snapshot = completePlaybookNode(t, snapshot, "unit", `{"outcome":"pass","summary":"unit green again"}`)
+	snapshot = completePlaybookNode(t, snapshot, "integration", `{"outcome":"pass","summary":"e2e green"}`)
+	if snapshot.Run.Status != "succeeded" {
+		t.Fatalf("loop run status = %s, want succeeded", snapshot.Run.Status)
+	}
+	var contextValue struct {
+		Playbook struct {
+			TransitionCount int `json:"transition_count"`
+			Trace           []struct {
+				From string `json:"from"`
+				To   string `json:"to"`
+				End  bool   `json:"end"`
+			} `json:"trace"`
+		} `json:"_playbook"`
+	}
+	if err := json.Unmarshal(snapshot.Run.Context, &contextValue); err != nil {
+		t.Fatalf("decode transition trace: %v", err)
+	}
+	if contextValue.Playbook.TransitionCount != 10 || len(contextValue.Playbook.Trace) != 10 || !contextValue.Playbook.Trace[9].End {
+		t.Fatalf("transition trace = count %d length %d final %#v", contextValue.Playbook.TransitionCount, len(contextValue.Playbook.Trace), contextValue.Playbook.Trace[9])
+	}
+}
+
 // TestPlaybookRetryLoopE2E models the smallest useful loop as a bounded step
 // retry rather than a cycle in the workflow graph:
 //

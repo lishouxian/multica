@@ -107,6 +107,7 @@
     "refresh_runs": "Refresh runs",
     "run_issue": "Issue",
     "attempt": "Attempt",
+    "route_trace": "Route trace",
     "retry_button": "Retry",
     "retry_started": "Step dispatched again",
     "retry_failed": "Failed to retry step.",

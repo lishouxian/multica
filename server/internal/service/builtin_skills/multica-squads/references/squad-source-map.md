@@ -126,8 +126,9 @@ server/internal/handler/playbook_e2e_test.go
 
 Contracts:
 
-- save validates DAG shape, restricted output schemas, branch/input references,
-  agent workspace membership, and squad membership;
+- save validates either DAG shape or explicit state-machine transitions,
+  restricted output schemas, branch/input references, agent workspace
+  membership, and squad membership;
 - run start is idempotent for one active `(squad, root issue)` and requires the
   root issue to be assigned to that squad;
 - ready steps become agent-assigned child issues and reuse the normal task queue;
@@ -138,6 +139,8 @@ Contracts:
   terminal failure enter `needs_attention`;
 - task-queue auto-retry is rebound to the same node-run rather than creating a
   parallel workflow node.
+- state-machine back-edges reuse the target Issue, create a fresh task attempt,
+  append a route trace to run context, and stop at per-step or run-wide budgets.
 
 ## Issue Assignment
 

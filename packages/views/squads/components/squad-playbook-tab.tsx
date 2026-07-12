@@ -20,6 +20,33 @@ interface SquadPlaybookTabProps {
   onDirtyChange: (dirty: boolean) => void;
 }
 
+interface PlaybookRouteTraceEntry {
+  sequence: number;
+  from: string;
+  to: string;
+  end: boolean;
+  output: unknown;
+}
+
+function getPlaybookRouteTrace(context: Record<string, unknown>): PlaybookRouteTraceEntry[] {
+  const runtime = context._playbook;
+  if (typeof runtime !== "object" || runtime === null || Array.isArray(runtime)) return [];
+  const trace = (runtime as Record<string, unknown>).trace;
+  if (!Array.isArray(trace)) return [];
+  return trace.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) return [];
+    const value = entry as Record<string, unknown>;
+    if (typeof value.sequence !== "number" || typeof value.from !== "string") return [];
+    return [{
+      sequence: value.sequence,
+      from: value.from,
+      to: typeof value.to === "string" ? value.to : "",
+      end: value.end === true,
+      output: value.output,
+    }];
+  });
+}
+
 function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
   if (status === "succeeded") return "default";
   if (status === "needs_attention" || status === "failed") return "destructive";
@@ -170,8 +197,10 @@ export function SquadPlaybookTab({
 
         {runsQuery.data?.length ? (
           <div className="space-y-2">
-            {runsQuery.data.map((run) => (
-              <details key={run.id} className="rounded-md border px-3 py-2">
+            {runsQuery.data.map((run) => {
+              const routeTrace = getPlaybookRouteTrace(run.context);
+              return (
+                <details key={run.id} className="rounded-md border px-3 py-2">
                 <summary className="flex cursor-pointer list-none items-center gap-2 text-xs">
                   <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
                   <span className="font-mono">{run.id.slice(0, 8)}</span>
@@ -209,8 +238,24 @@ export function SquadPlaybookTab({
                     </li>
                   ))}
                 </ol>
-              </details>
-            ))}
+                {routeTrace.length > 0 && (
+                  <div className="mt-3 border-t pt-3">
+                    <p className="mb-2 text-[11px] font-medium text-muted-foreground">
+                      {t(($) => $.playbook_tab.route_trace)}
+                    </p>
+                    <ol className="space-y-1 font-mono text-[11px] text-muted-foreground">
+                      {routeTrace.map((entry) => (
+                        <li key={`${entry.sequence}:${entry.from}:${entry.to}:${entry.end}`}>
+                          <span className="mr-2 tabular-nums">#{entry.sequence}</span>
+                          {entry.from} → {entry.end ? "END" : entry.to}
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+                </details>
+              );
+            })}
           </div>
         ) : (
           <p className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">

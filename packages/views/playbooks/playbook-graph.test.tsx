@@ -30,6 +30,8 @@ describe("parsePlaybookGraphSteps", () => {
         inputNames: [],
         outputNames: ["outcome", "summary"],
         maxAttempts: 2,
+        isStart: false,
+        transitions: [],
       },
       {
         key: "review",
@@ -39,8 +41,34 @@ describe("parsePlaybookGraphSteps", () => {
         inputNames: ["summary"],
         outputNames: ["verdict"],
         maxAttempts: 2,
+        isStart: false,
+        transitions: [],
       },
     ]);
+  });
+
+  it("projects state-machine start and conditional back-edges", () => {
+    expect(parsePlaybookGraphSteps({
+      version: 1,
+      start: "code",
+      steps: [{
+        key: "code",
+        title: "Code",
+        agent_id: "agent-1",
+        transitions: [
+          { to: "design", when: { field: "outcome", equals: "design_issue" } },
+          { to: "unit", when: { field: "outcome", equals: "done" } },
+        ],
+        output_schema: { properties: { outcome: {} } },
+      }],
+    })).toEqual([expect.objectContaining({
+      key: "code",
+      isStart: true,
+      transitions: [
+        { to: "design", label: "design_issue" },
+        { to: "unit", label: "done" },
+      ],
+    })]);
   });
 
   it("ignores malformed steps instead of crashing an installed client", () => {

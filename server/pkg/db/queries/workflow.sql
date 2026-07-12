@@ -80,6 +80,13 @@ UPDATE workflow_run SET
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateWorkflowRunContext :one
+UPDATE workflow_run SET
+    context = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: CreateWorkflowNodeRun :one
 INSERT INTO workflow_node_run (workflow_run_id, step_key, agent_id)
 VALUES ($1, $2, $3)
@@ -107,6 +114,18 @@ UPDATE workflow_node_run SET
     input_snapshot = $2,
     updated_at = now()
 WHERE id = $1 AND status = 'pending'
+RETURNING *;
+
+-- name: ActivateWorkflowNode :one
+UPDATE workflow_node_run SET
+    status = 'ready',
+    accepted_task_id = NULL,
+    output = NULL,
+    input_snapshot = $2,
+    error = '',
+    completed_at = NULL,
+    updated_at = now()
+WHERE id = $1 AND status IN ('pending', 'succeeded', 'skipped')
 RETURNING *;
 
 -- name: MarkWorkflowNodeRunning :one
@@ -151,7 +170,7 @@ UPDATE workflow_node_run SET
     status = 'needs_attention',
     error = $2,
     updated_at = now()
-WHERE id = $1 AND status IN ('pending', 'ready', 'running', 'failed')
+WHERE id = $1 AND status IN ('pending', 'ready', 'running', 'failed', 'succeeded')
 RETURNING *;
 
 -- name: RebindWorkflowNodeRetryTask :one

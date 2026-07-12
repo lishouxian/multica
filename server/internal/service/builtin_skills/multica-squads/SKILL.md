@@ -191,15 +191,28 @@ The squad-private JSON definition is intentionally constrained:
 - `depends_on` provides serial and wait-all semantics;
 - `when` compares one direct dependency output field to a JSON value for a
   simple branch;
+- alternatively, `start` plus per-step `transitions` selects state-machine
+  mode. A transition uses `{ "to": "step", "when": { "field": "outcome",
+  "equals": "value" } }` or `{ "end": true, ... }`; backward `to` targets are
+  allowed;
+- `max_transitions` bounds the whole state-machine run (default 32, maximum
+  100), while each target step's `max_attempts` bounds how often that step may
+  execute;
 - `input` supports `{ "from": "step.field" }`,
   `{ "from": "context.field" }`, optional `default`, or a constant `value`;
-- cycles, undeclared dependencies, non-member agents, unknown fields, and
+- DAG definitions reject cycles. State-machine definitions allow only explicit
+  transition cycles and cannot mix `depends_on` / dependency `when` with
+  `transitions`; undeclared targets, non-member agents, unknown fields, and
   unsupported schema types are rejected at save time.
 
 At activation, each node stores an immutable `input_snapshot` containing run
 context, namespaced accepted upstream output, and mapped input. Only the
 accepted task output can advance a node. A false branch becomes `skipped`, and
 a wait-all step starts only after every dependency is `succeeded` or `skipped`.
+In state-machine mode, the selected target reuses its existing Issue, starts a
+fresh task attempt, and receives the latest accepted outputs. Every selected
+edge is appended to the run's `_playbook.trace`; exhausting either transition
+or step attempt budgets moves the run to `needs_attention`.
 
 ## Issue assignment behavior
 

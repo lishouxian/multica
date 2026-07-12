@@ -3,7 +3,7 @@
 import type { PlaybookNodeRun } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";
-import { ArrowRight, Bot, GitBranch } from "lucide-react";
+import { ArrowRight, Bot, GitBranch, RotateCcw } from "lucide-react";
 import { AppLink } from "../navigation";
 
 export interface PlaybookGraphStep {
@@ -14,6 +14,8 @@ export interface PlaybookGraphStep {
   inputNames: string[];
   outputNames: string[];
   maxAttempts: number;
+  isStart: boolean;
+  transitions: Array<{ to: string; label: string }>;
 }
 
 interface PlaybookGraphProps {
@@ -37,6 +39,20 @@ export function parsePlaybookGraphSteps(
     const outputSchema = isRecord(rawStep.output_schema) ? rawStep.output_schema : {};
     const outputProperties = isRecord(outputSchema.properties) ? outputSchema.properties : {};
     const input = isRecord(rawStep.input) ? rawStep.input : {};
+    const transitions = Array.isArray(rawStep.transitions)
+      ? rawStep.transitions.flatMap((rawTransition) => {
+          if (!isRecord(rawTransition)) return [];
+          const when = isRecord(rawTransition.when) ? rawTransition.when : null;
+          const equals = when?.equals;
+          const label = equals === undefined
+            ? "default"
+            : typeof equals === "string" || typeof equals === "number" || typeof equals === "boolean"
+              ? String(equals)
+              : JSON.stringify(equals);
+          if (rawTransition.end === true) return [{ to: "END", label }];
+          return typeof rawTransition.to === "string" ? [{ to: rawTransition.to, label }] : [];
+        })
+      : [];
     return [{
       key: rawStep.key,
       title: typeof rawStep.title === "string" ? rawStep.title : rawStep.key,
@@ -49,11 +65,16 @@ export function parsePlaybookGraphSteps(
       maxAttempts: typeof rawStep.max_attempts === "number" && rawStep.max_attempts > 0
         ? rawStep.max_attempts
         : 2,
+      isStart: definition.start === rawStep.key,
+      transitions,
     }];
   });
 }
 
 function groupByDepth(steps: PlaybookGraphStep[]): PlaybookGraphStep[][] {
+  if (steps.some((step) => step.transitions.length > 0)) {
+    return steps.map((step) => [step]);
+  }
   const byKey = new Map(steps.map((step) => [step.key, step]));
   const depths = new Map<string, number>();
   const visit = (key: string, visiting: Set<string>): number => {
@@ -120,7 +141,10 @@ export function PlaybookGraph({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{step.title}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="truncate text-sm font-medium">{step.title}</p>
+                          {step.isStart && <Badge variant="outline">START</Badge>}
+                        </div>
                         <p className="font-mono text-[11px] text-muted-foreground">{step.key}</p>
                       </div>
                       {node && <Badge variant={statusVariant(node.status)}>{node.status}</Badge>}
@@ -129,6 +153,16 @@ export function PlaybookGraph({
                       <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">
                         <GitBranch className="size-3" aria-hidden="true" />
                         <span className="truncate">{step.dependsOn.join(" + ")}</span>
+                      </div>
+                    )}
+                    {step.transitions.length > 0 && (
+                      <div className="mt-2 space-y-1 border-t pt-2 text-[11px] text-muted-foreground">
+                        {step.transitions.map((transition, index) => (
+                          <div key={`${transition.label}:${transition.to}:${index}`} className="flex items-center gap-1">
+                            <RotateCcw className="size-3 shrink-0" aria-hidden="true" />
+                            <span className="truncate">{transition.label} → {transition.to}</span>
+                          </div>
+                        ))}
                       </div>
                     )}
                     <div className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">

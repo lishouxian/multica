@@ -104,6 +104,7 @@
     "refresh_runs": "Run を更新",
     "run_issue": "Issue",
     "attempt": "試行",
+    "route_trace": "遷移履歴",
     "retry_button": "再試行",
     "retry_started": "ステップを再ディスパッチしました",
     "retry_failed": "ステップの再試行に失敗しました。",

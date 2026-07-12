@@ -104,6 +104,7 @@
     "refresh_runs": "刷新 Run",
     "run_issue": "Issue",
     "attempt": "尝试次数",
+    "route_trace": "流转轨迹",
     "retry_button": "重试",
     "retry_started": "步骤已重新派发",
     "retry_failed": "重试步骤失败。",
