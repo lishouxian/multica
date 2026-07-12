@@ -902,6 +902,11 @@ func (s *PlaybookService) dispatchReadyNode(ctx context.Context, run db.Workflow
 				return fmt.Errorf("reset issue for step %q retry: %w", step.Key, err)
 			}
 		}
+		if _, err := s.Queries.UpdateWorkflowStepIssueDescription(ctx, db.UpdateWorkflowStepIssueDescriptionParams{
+			ID: issue.ID, WorkspaceID: issue.WorkspaceID, Description: pgtype.Text{String: playbookStepDescription(step, node.InputSnapshot), Valid: true},
+		}); err != nil {
+			return fmt.Errorf("refresh issue handoff for step %q: %w", step.Key, err)
+		}
 		task, err := s.IssueService.TaskService.RerunIssue(ctx, issue.ID, node.TaskID, pgtype.UUID{})
 		if err != nil {
 			return fmt.Errorf("enqueue retry for step %q: %w", step.Key, err)
@@ -913,12 +918,7 @@ func (s *PlaybookService) dispatchReadyNode(ctx context.Context, run db.Workflow
 		}
 		return nil
 	}
-	prettyInput := string(node.InputSnapshot)
-	var formatted bytes.Buffer
-	if json.Indent(&formatted, node.InputSnapshot, "", "  ") == nil {
-		prettyInput = formatted.String()
-	}
-	description := strings.TrimSpace(step.Instructions) + "\n\n## Handoff input\n\n```json\n" + prettyInput + "\n```\n\nSubmit the structured result before finishing:\n\n```bash\nmultica task output set --task \"$MULTICA_TASK_ID\" --json-file result.json\n```"
+	description := playbookStepDescription(step, node.InputSnapshot)
 	result, err := s.IssueService.Create(ctx, IssueCreateParams{
 		WorkspaceID:    run.WorkspaceID,
 		Title:          step.Title,
@@ -943,6 +943,15 @@ func (s *PlaybookService) dispatchReadyNode(ctx context.Context, run db.Workflow
 		return fmt.Errorf("start step %q: %w", step.Key, err)
 	}
 	return nil
+}
+
+func playbookStepDescription(step PlaybookStep, input []byte) string {
+	prettyInput := string(input)
+	var formatted bytes.Buffer
+	if json.Indent(&formatted, input, "", "  ") == nil {
+		prettyInput = formatted.String()
+	}
+	return strings.TrimSpace(step.Instructions) + "\n\n## Handoff input\n\n```json\n" + prettyInput + "\n```\n\nSubmit the structured result before finishing:\n\n```bash\nmultica task output set --task \"$MULTICA_TASK_ID\" --json-file result.json\n```"
 }
 
 func (s *PlaybookService) validateDispatchAgent(ctx context.Context, run db.WorkflowRun, agentID pgtype.UUID) error {

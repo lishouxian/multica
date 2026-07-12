@@ -1013,6 +1013,53 @@ func (q *Queries) UpdateWorkflowRunStatus(ctx context.Context, arg UpdateWorkflo
 	return i, err
 }
 
+const updateWorkflowStepIssueDescription = `-- name: UpdateWorkflowStepIssueDescription :one
+UPDATE issue SET
+    description = $3,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage
+`
+
+type UpdateWorkflowStepIssueDescriptionParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Description pgtype.Text `json:"description"`
+}
+
+func (q *Queries) UpdateWorkflowStepIssueDescription(ctx context.Context, arg UpdateWorkflowStepIssueDescriptionParams) (Issue, error) {
+	row := q.db.QueryRow(ctx, updateWorkflowStepIssueDescription, arg.ID, arg.WorkspaceID, arg.Description)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.Status,
+		&i.Priority,
+		&i.AssigneeType,
+		&i.AssigneeID,
+		&i.CreatorType,
+		&i.CreatorID,
+		&i.ParentIssueID,
+		&i.AcceptanceCriteria,
+		&i.ContextRefs,
+		&i.Position,
+		&i.DueDate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Number,
+		&i.ProjectID,
+		&i.OriginType,
+		&i.OriginID,
+		&i.FirstExecutedAt,
+		&i.StartDate,
+		&i.Metadata,
+		&i.Stage,
+	)
+	return i, err
+}
+
 const upsertSquadWorkflowDefinition = `-- name: UpsertSquadWorkflowDefinition :one
 INSERT INTO workflow_definition (workspace_id, squad_id, name, definition)
 VALUES ($1, $2, $3, $4)

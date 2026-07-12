@@ -302,6 +302,10 @@ func TestPlaybookStateMachineLoopE2E(t *testing.T) {
 	if err := json.Unmarshal(secondDesign.InputSnapshot, &designInput); err != nil || designInput.Input["feedback"] != "API contract is incomplete" {
 		t.Fatalf("revisited design input = %#v, err=%v", designInput.Input, err)
 	}
+	revisitedIssue, err := testHandler.Queries.GetIssue(ctx, secondDesign.IssueID)
+	if err != nil || !strings.Contains(revisitedIssue.Description.String, "API contract is incomplete") {
+		t.Fatalf("revisited design issue did not receive the latest handoff: %v / %q", err, revisitedIssue.Description.String)
+	}
 
 	snapshot = completePlaybookNode(t, snapshot, "design", `{"outcome":"approved","plan":"plan-v2"}`)
 	snapshot = completePlaybookNode(t, snapshot, "code", `{"outcome":"done","commit":"commit-v3"}`)
