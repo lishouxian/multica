@@ -577,6 +577,7 @@ func (s *PlaybookService) HandleTaskCompleted(ctx context.Context, taskID pgtype
 	if err != nil {
 		return fmt.Errorf("complete workflow step: %w", err)
 	}
+	s.projectStepIssueStatus(ctx, run, completed, "done")
 	definition, err := DecodePlaybookDefinition(run.DefinitionSnapshot)
 	if err != nil {
 		return err
@@ -595,6 +596,10 @@ func (s *PlaybookService) HandleTaskFailed(ctx context.Context, taskID pgtype.UU
 	if err != nil {
 		return err
 	}
+	run, err := s.Queries.GetWorkflowRun(ctx, node.WorkflowRunID)
+	if err != nil {
+		return fmt.Errorf("load workflow run: %w", err)
+	}
 	failedTask, err := s.Queries.GetAgentTask(ctx, taskID)
 	if err == nil && failedTask.IssueID.Valid {
 		latest, latestErr := s.Queries.GetLatestAgentTaskForIssue(ctx, db.GetLatestAgentTaskForIssueParams{IssueID: failedTask.IssueID, AgentID: failedTask.AgentID})
@@ -607,6 +612,9 @@ func (s *PlaybookService) HandleTaskFailed(ctx context.Context, taskID pgtype.UU
 		return err
 	}
 	_, err = s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: node.WorkflowRunID, Status: "needs_attention"})
+	if err == nil {
+		s.projectStepIssueStatus(ctx, run, node, "blocked")
+	}
 	return err
 }
 
@@ -786,6 +794,7 @@ func (s *PlaybookService) activateStateStep(ctx context.Context, run db.Workflow
 func (s *PlaybookService) stopStateMachine(ctx context.Context, run db.WorkflowRun, node db.WorkflowNodeRun, reason string) error {
 	if node.ID.Valid {
 		_, _ = s.Queries.MarkWorkflowNodeNeedsAttention(ctx, db.MarkWorkflowNodeNeedsAttentionParams{ID: node.ID, Error: reason})
+		s.projectStepIssueStatus(ctx, run, node, "blocked")
 	}
 	_, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "needs_attention"})
 	return err
@@ -880,6 +889,51 @@ func (s *PlaybookService) projectRootIssueStatus(ctx context.Context, run db.Wor
 	})
 }
 
+func (s *PlaybookService) projectStepIssueStatus(ctx context.Context, run db.WorkflowRun, node db.WorkflowNodeRun, target string) {
+	if !node.IssueID.Valid {
+		return
+	}
+	issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          node.IssueID,
+		WorkspaceID: run.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("playbook: load step issue for status projection failed", "run_id", run.ID, "step", node.StepKey, "error", err)
+		return
+	}
+	if issue.Status == target || issue.Status == "cancelled" {
+		return
+	}
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID:          issue.ID,
+		Status:      target,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("playbook: project step issue status failed", "run_id", run.ID, "step", node.StepKey, "status", target, "error", err)
+		return
+	}
+	if s.IssueService == nil || s.IssueService.Bus == nil {
+		return
+	}
+	prefix := ""
+	if workspace, workspaceErr := s.Queries.GetWorkspace(ctx, issue.WorkspaceID); workspaceErr == nil {
+		prefix = workspace.IssuePrefix
+	}
+	s.IssueService.Bus.Publish(events.Event{
+		Type:        protocol.EventIssueUpdated,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   "system",
+		ActorID:     "",
+		Payload: map[string]any{
+			"issue":          issueToMap(updated, prefix),
+			"status_changed": true,
+			"prev_status":    issue.Status,
+			"source":         "playbook_run",
+		},
+	})
+}
+
 func (s *PlaybookService) dispatchReadyNode(ctx context.Context, run db.WorkflowRun, step PlaybookStep, node db.WorkflowNodeRun, agentID pgtype.UUID) error {
 	if err := s.validateDispatchAgent(ctx, run, agentID); err != nil {
 		return err
@@ -930,6 +984,8 @@ func (s *PlaybookService) dispatchReadyNode(ctx context.Context, run db.Workflow
 		CreatorType:    "member",
 		CreatorID:      run.CreatedBy,
 		ParentIssueID:  run.RootIssueID,
+		OriginType:     pgtype.Text{String: "workflow", Valid: true},
+		OriginID:       run.ID,
 		AllowDuplicate: true,
 	}, IssueCreateOpts{ActorID: util.UUIDToString(run.CreatedBy), Platform: "workflow"})
 	if err != nil {

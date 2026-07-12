@@ -18,6 +18,11 @@ SELECT parent_issue_id,
 FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id IS NOT NULL
+  AND origin_type IS DISTINCT FROM 'workflow'
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_node_run
+    WHERE workflow_node_run.issue_id = issue.id
+  )
 GROUP BY parent_issue_id
 `
 
@@ -706,6 +711,11 @@ func (q *Queries) GetIssueInWorkspace(ctx context.Context, arg GetIssueInWorkspa
 const listChildIssues = `-- name: ListChildIssues :many
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage FROM issue
 WHERE parent_issue_id = $1
+  AND origin_type IS DISTINCT FROM 'workflow'
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_node_run
+    WHERE workflow_node_run.issue_id = issue.id
+  )
 ORDER BY number ASC
 `
 
@@ -714,7 +724,8 @@ ORDER BY number ASC
 // position column is computed per-(workspace, status) by NextTopPosition,
 // not relative to siblings, so ordering by it interleaves children
 // unpredictably across batches and statuses; number is a per-workspace
-// monotonic counter and is sibling-stable.
+// monotonic counter and is sibling-stable. Workflow step issues are execution
+// projections rendered by the run ledger, not business sub-issues.
 func (q *Queries) ListChildIssues(ctx context.Context, parentIssueID pgtype.UUID) ([]Issue, error) {
 	rows, err := q.db.Query(ctx, listChildIssues, parentIssueID)
 	if err != nil {
@@ -765,6 +776,11 @@ const listChildrenByParents = `-- name: ListChildrenByParents :many
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, stage FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id = ANY($2::uuid[])
+  AND origin_type IS DISTINCT FROM 'workflow'
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_node_run
+    WHERE workflow_node_run.issue_id = issue.id
+  )
 ORDER BY parent_issue_id, number ASC
 `
 
@@ -779,7 +795,8 @@ type ListChildrenByParentsParams struct {
 // parent_issue_id; the workspace filter is also enforced so callers can't
 // enumerate children of parents in workspaces they don't belong to.
 // Within each parent, order by number ASC for the same sibling-stable
-// creation order as ListChildIssues.
+// creation order as ListChildIssues. Apply the same workflow projection filter
+// so every child surface agrees with the issue detail page.
 func (q *Queries) ListChildrenByParents(ctx context.Context, arg ListChildrenByParentsParams) ([]Issue, error) {
 	rows, err := q.db.Query(ctx, listChildrenByParents, arg.WorkspaceID, arg.ParentIds)
 	if err != nil {

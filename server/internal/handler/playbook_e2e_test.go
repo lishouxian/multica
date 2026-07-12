@@ -161,6 +161,22 @@ func TestPlaybookSquadStructuredHandoffE2E(t *testing.T) {
 	if snapshot.Run.Status != "succeeded" {
 		t.Fatalf("run status = %s, want succeeded", snapshot.Run.Status)
 	}
+	for _, node := range snapshot.Nodes {
+		if !node.IssueID.Valid || node.Status == "skipped" {
+			continue
+		}
+		stepIssue, err := testHandler.Queries.GetIssue(ctx, node.IssueID)
+		if err != nil || stepIssue.Status != "done" {
+			t.Fatalf("completed step %s issue status = %q, err=%v; want done", node.StepKey, stepIssue.Status, err)
+		}
+		if stepIssue.OriginType.String != "workflow" || stepIssue.OriginID != snapshot.Run.ID {
+			t.Fatalf("completed step %s provenance = %q/%s, want workflow/%s", node.StepKey, stepIssue.OriginType.String, stepIssue.OriginID, snapshot.Run.ID)
+		}
+	}
+	visibleChildren, err := testHandler.Queries.ListChildIssues(ctx, rootResult.Issue.ID)
+	if err != nil || len(visibleChildren) != 0 {
+		t.Fatalf("workflow step issues leaked into child list: count=%d err=%v", len(visibleChildren), err)
+	}
 	projectedRoot, err = testHandler.Queries.GetIssue(ctx, rootResult.Issue.ID)
 	if err != nil {
 		t.Fatalf("reload completed root: %v", err)
@@ -420,6 +436,10 @@ func TestPlaybookRetryLoopE2E(t *testing.T) {
 	if snapshot.Run.Status != "needs_attention" || attention.Status != "needs_attention" || attention.Error != "simulated validator crash" {
 		t.Fatalf("failure projection = run %s, node %s, error %q", snapshot.Run.Status, attention.Status, attention.Error)
 	}
+	failedIssue, err := testHandler.Queries.GetIssue(ctx, attention.IssueID)
+	if err != nil || failedIssue.Status != "blocked" {
+		t.Fatalf("failed step issue status = %q, err=%v; want blocked", failedIssue.Status, err)
+	}
 
 	snapshot, err = testHandler.PlaybookService.DispatchStep(ctx, service.DispatchPlaybookStepParams{
 		RunID: snapshot.Run.ID, StepKey: "validate",
@@ -431,9 +451,17 @@ func TestPlaybookRetryLoopE2E(t *testing.T) {
 	if snapshot.Run.Status != "running" || second.Status != "running" || second.Attempt != 2 || second.TaskID == first.TaskID || second.IssueID != first.IssueID {
 		t.Fatalf("retry projection = run %s, node %s attempt %d task_same=%v issue_same=%v", snapshot.Run.Status, second.Status, second.Attempt, second.TaskID == first.TaskID, second.IssueID == first.IssueID)
 	}
+	retriedIssue, err := testHandler.Queries.GetIssue(ctx, second.IssueID)
+	if err != nil || retriedIssue.Status != "todo" {
+		t.Fatalf("retried step issue status = %q, err=%v; want todo", retriedIssue.Status, err)
+	}
 	snapshot = completePlaybookNode(t, snapshot, "validate", `{"valid":true}`)
 	if snapshot.Run.Status != "succeeded" || findNode(t, snapshot.Nodes, "validate").Attempt != 2 {
 		t.Fatalf("completed retry = run %s attempt %d", snapshot.Run.Status, findNode(t, snapshot.Nodes, "validate").Attempt)
+	}
+	completedIssue, err := testHandler.Queries.GetIssue(ctx, second.IssueID)
+	if err != nil || completedIssue.Status != "done" {
+		t.Fatalf("completed retry issue status = %q, err=%v; want done", completedIssue.Status, err)
 	}
 }
 

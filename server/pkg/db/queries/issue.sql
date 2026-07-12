@@ -261,9 +261,15 @@ WHERE i.workspace_id = $1
 -- position column is computed per-(workspace, status) by NextTopPosition,
 -- not relative to siblings, so ordering by it interleaves children
 -- unpredictably across batches and statuses; number is a per-workspace
--- monotonic counter and is sibling-stable.
+-- monotonic counter and is sibling-stable. Workflow step issues are execution
+-- projections rendered by the run ledger, not business sub-issues.
 SELECT * FROM issue
 WHERE parent_issue_id = $1
+  AND origin_type IS DISTINCT FROM 'workflow'
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_node_run
+    WHERE workflow_node_run.issue_id = issue.id
+  )
 ORDER BY number ASC;
 
 -- name: ListChildrenByParents :many
@@ -273,10 +279,16 @@ ORDER BY number ASC;
 -- parent_issue_id; the workspace filter is also enforced so callers can't
 -- enumerate children of parents in workspaces they don't belong to.
 -- Within each parent, order by number ASC for the same sibling-stable
--- creation order as ListChildIssues.
+-- creation order as ListChildIssues. Apply the same workflow projection filter
+-- so every child surface agrees with the issue detail page.
 SELECT * FROM issue
 WHERE workspace_id = sqlc.arg('workspace_id')
   AND parent_issue_id = ANY(sqlc.arg('parent_ids')::uuid[])
+  AND origin_type IS DISTINCT FROM 'workflow'
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_node_run
+    WHERE workflow_node_run.issue_id = issue.id
+  )
 ORDER BY parent_issue_id, number ASC;
 
 -- name: GetIssueByOrigin :one
@@ -312,6 +324,11 @@ SELECT parent_issue_id,
 FROM issue
 WHERE workspace_id = $1
   AND parent_issue_id IS NOT NULL
+  AND origin_type IS DISTINCT FROM 'workflow'
+  AND NOT EXISTS (
+    SELECT 1 FROM workflow_node_run
+    WHERE workflow_node_run.issue_id = issue.id
+  )
 GROUP BY parent_issue_id;
 
 -- SearchIssues: moved to handler (dynamic SQL for multi-word search support).
