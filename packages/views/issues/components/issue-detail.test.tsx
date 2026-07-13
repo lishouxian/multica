@@ -978,6 +978,36 @@ describe("IssueDetail (shared)", () => {
     });
   });
 
+  it("keeps consecutive workflow transitions as separate audit rows", async () => {
+    mockApiObj.listTimeline.mockResolvedValue([
+      {
+        type: "activity",
+        id: "workflow-advance-1",
+        actor_type: "system",
+        actor_id: null,
+        action: "workflow_advanced",
+        details: { from_title: "Design", to_title: "Code", attempt: 1 },
+        created_at: "2026-01-18T00:00:00Z",
+      },
+      {
+        type: "activity",
+        id: "workflow-advance-2",
+        actor_type: "system",
+        actor_id: null,
+        action: "workflow_advanced",
+        details: { from_title: "Code", to_title: "Unit test", attempt: 1 },
+        created_at: "2026-01-18T00:01:00Z",
+      },
+    ] as TimelineEntry[]);
+
+    renderIssueDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText(/advanced the workflow from “Design” to “Code”/i)).toBeInTheDocument();
+    });
+    expect(screen.getByText(/advanced the workflow from “Code” to “Unit test”/i)).toBeInTheDocument();
+  });
+
   it("truncates the trailing activity block to the most recent 8 entries with a show-more toggle", async () => {
     // 10 activities, all in the trailing block (no comment after them, so it's
     // the trailing block by definition). Alternating action types so the

@@ -255,6 +255,35 @@ function formatActivity(
       return t(($) => $.activity.task_completed, { count: entry.coalesced_count ?? 1 });
     case "task_failed":
       return t(($) => $.activity.task_failed, { count: entry.coalesced_count ?? 1 });
+    case "workflow_run_started":
+      return t(($) => $.activity.workflow_run_started, { count: Number(details.step_count ?? 0) });
+    case "workflow_advanced":
+      return t(($) => $.activity.workflow_advanced, {
+        from: details.from_title ?? details.from_step ?? "?",
+        to: details.to_title ?? details.to_step ?? "?",
+        attempt: details.attempt ?? "?",
+      });
+    case "workflow_returned":
+      return t(($) => $.activity.workflow_returned, {
+        from: details.from_title ?? details.from_step ?? "?",
+        to: details.to_title ?? details.to_step ?? "?",
+        attempt: details.attempt ?? "?",
+      });
+    case "workflow_step_retried":
+      return t(($) => $.activity.workflow_step_retried, {
+        step: details.step_title ?? details.step_key ?? "?",
+        attempt: details.attempt ?? "?",
+      });
+    case "workflow_needs_attention":
+      return t(($) => $.activity.workflow_needs_attention, {
+        step: details.step_title ?? details.step_key ?? "?",
+        reason: details.reason ?? "?",
+      });
+    case "workflow_run_completed":
+      return t(($) => $.activity.workflow_run_completed, {
+        transitions: details.transition_count ?? "0",
+        retries: details.retry_count ?? "0",
+      });
     case "squad_leader_evaluated": {
       const reason = details.reason?.trim();
       switch (details.outcome) {
@@ -988,7 +1017,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     // Coalesce consecutive activities from the same actor + action.
     // - task_completed / task_failed: no time limit (these repeat across runs)
     // - all other actions: within a 2-minute window
-    // - squad_leader_evaluated: never coalesce; outcome/reason are audit data
+    // - workflow_* / squad_leader_evaluated: never coalesce; transition and
+    //   outcome details are audit data
     const COALESCE_MS = 2 * 60 * 1000;
     const NO_TIME_LIMIT_ACTIONS = new Set(["task_completed", "task_failed"]);
     const NEVER_COALESCE_ACTIONS = new Set(["squad_leader_evaluated"]);
@@ -997,6 +1027,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
       if (entry.type === "activity") {
         const prev = coalesced[coalesced.length - 1];
         if (
+          !entry.action?.startsWith("workflow_") &&
           !NEVER_COALESCE_ACTIONS.has(entry.action!) &&
           prev?.type === "activity" &&
           prev.action === entry.action &&

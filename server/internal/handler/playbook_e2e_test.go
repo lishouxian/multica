@@ -346,6 +346,28 @@ func TestPlaybookStateMachineLoopE2E(t *testing.T) {
 	if contextValue.Playbook.TransitionCount != 10 || len(contextValue.Playbook.Trace) != 10 || !contextValue.Playbook.Trace[9].End {
 		t.Fatalf("transition trace = count %d length %d final %#v", contextValue.Playbook.TransitionCount, len(contextValue.Playbook.Trace), contextValue.Playbook.Trace[9])
 	}
+	var rootStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, rootResult.Issue.ID).Scan(&rootStatus); err != nil || rootStatus != "done" {
+		t.Fatalf("completed root status = %q, err=%v; want done", rootStatus, err)
+	}
+	var started, advanced, returned, completed int
+	if err := testPool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE action = 'workflow_run_started'),
+			count(*) FILTER (WHERE action = 'workflow_advanced'),
+			count(*) FILTER (WHERE action = 'workflow_returned'),
+			count(*) FILTER (WHERE action = 'workflow_run_completed')
+		FROM activity_log WHERE issue_id = $1
+	`, rootResult.Issue.ID).Scan(&started, &advanced, &returned, &completed); err != nil {
+		t.Fatalf("load workflow activities: %v", err)
+	}
+	if started != 1 || advanced != 7 || returned != 2 || completed != 1 {
+		t.Fatalf("workflow activities = started %d advanced %d returned %d completed %d", started, advanced, returned, completed)
+	}
+	var summary string
+	if err := testPool.QueryRow(ctx, `SELECT content FROM comment WHERE issue_id = $1 AND author_type = 'system' ORDER BY created_at DESC LIMIT 1`, rootResult.Issue.ID).Scan(&summary); err != nil || !strings.Contains(summary, "10") || !strings.Contains(summary, "Retries:** 6") {
+		t.Fatalf("workflow completion summary = %q, err=%v", summary, err)
+	}
 }
 
 // TestPlaybookRetryLoopE2E models the smallest useful loop as a bounded step
@@ -440,6 +462,10 @@ func TestPlaybookRetryLoopE2E(t *testing.T) {
 	if err != nil || failedIssue.Status != "blocked" {
 		t.Fatalf("failed step issue status = %q, err=%v; want blocked", failedIssue.Status, err)
 	}
+	failedRoot, err := testHandler.Queries.GetIssue(ctx, rootResult.Issue.ID)
+	if err != nil || failedRoot.Status != "blocked" {
+		t.Fatalf("failed root issue status = %q, err=%v; want blocked", failedRoot.Status, err)
+	}
 
 	snapshot, err = testHandler.PlaybookService.DispatchStep(ctx, service.DispatchPlaybookStepParams{
 		RunID: snapshot.Run.ID, StepKey: "validate",
@@ -455,9 +481,29 @@ func TestPlaybookRetryLoopE2E(t *testing.T) {
 	if err != nil || retriedIssue.Status != "todo" {
 		t.Fatalf("retried step issue status = %q, err=%v; want todo", retriedIssue.Status, err)
 	}
+	retriedRoot, err := testHandler.Queries.GetIssue(ctx, rootResult.Issue.ID)
+	if err != nil || retriedRoot.Status != "in_progress" {
+		t.Fatalf("retried root issue status = %q, err=%v; want in_progress", retriedRoot.Status, err)
+	}
 	snapshot = completePlaybookNode(t, snapshot, "validate", `{"valid":true}`)
 	if snapshot.Run.Status != "succeeded" || findNode(t, snapshot.Nodes, "validate").Attempt != 2 {
 		t.Fatalf("completed retry = run %s attempt %d", snapshot.Run.Status, findNode(t, snapshot.Nodes, "validate").Attempt)
+	}
+	var attentionEvents, retryEvents, completionEvents, systemComments int
+	if err := testPool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE action = 'workflow_needs_attention'),
+			count(*) FILTER (WHERE action = 'workflow_step_retried'),
+			count(*) FILTER (WHERE action = 'workflow_run_completed')
+		FROM activity_log WHERE issue_id = $1
+	`, rootResult.Issue.ID).Scan(&attentionEvents, &retryEvents, &completionEvents); err != nil {
+		t.Fatalf("load retry activities: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM comment WHERE issue_id = $1 AND author_type = 'system'`, rootResult.Issue.ID).Scan(&systemComments); err != nil {
+		t.Fatalf("count workflow comments: %v", err)
+	}
+	if attentionEvents != 1 || retryEvents != 1 || completionEvents != 1 || systemComments != 2 {
+		t.Fatalf("retry projection = attention %d retry %d completion %d comments %d", attentionEvents, retryEvents, completionEvents, systemComments)
 	}
 	completedIssue, err := testHandler.Queries.GetIssue(ctx, second.IssueID)
 	if err != nil || completedIssue.Status != "done" {

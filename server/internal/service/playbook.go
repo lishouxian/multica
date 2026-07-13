@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -443,6 +444,10 @@ func (s *PlaybookService) StartRun(ctx context.Context, squad db.Squad, rootIssu
 		return PlaybookRunSnapshot{}, err
 	}
 	s.projectRootIssueStatus(ctx, run, "in_progress")
+	s.recordPlaybookActivity(ctx, run, "workflow_run_started", map[string]any{
+		"run_id":     util.UUIDToString(run.ID),
+		"step_count": len(definition.Steps),
+	})
 	return s.snapshot(ctx, run)
 }
 
@@ -504,9 +509,18 @@ func (s *PlaybookService) DispatchStep(ctx context.Context, params DispatchPlayb
 		return PlaybookRunSnapshot{}, err
 	}
 	if run.Status == "needs_attention" {
-		if _, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "running"}); err != nil {
+		updatedRun, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "running"})
+		if err != nil {
 			return PlaybookRunSnapshot{}, fmt.Errorf("resume playbook run: %w", err)
 		}
+		run = updatedRun
+		s.projectRootIssueStatus(ctx, run, "in_progress")
+		s.recordPlaybookActivity(ctx, run, "workflow_step_retried", map[string]any{
+			"run_id":     util.UUIDToString(run.ID),
+			"step_key":   step.Key,
+			"step_title": step.Title,
+			"attempt":    node.Attempt,
+		})
 	}
 	return s.snapshot(ctx, run)
 }
@@ -567,11 +581,7 @@ func (s *PlaybookService) HandleTaskCompleted(ctx context.Context, taskID pgtype
 		return fmt.Errorf("load workflow run: %w", err)
 	}
 	if !node.AcceptedTaskID.Valid || node.AcceptedTaskID != taskID || node.Output == nil {
-		if _, markErr := s.Queries.MarkWorkflowNodeNeedsAttention(ctx, db.MarkWorkflowNodeNeedsAttentionParams{ID: node.ID, Error: "task completed without accepted structured output"}); markErr != nil {
-			return markErr
-		}
-		_, _ = s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "needs_attention"})
-		return nil
+		return s.markPlaybookNeedsAttention(ctx, run, node, "task completed without accepted structured output")
 	}
 	completed, err := s.Queries.MarkWorkflowNodeSucceeded(ctx, node.ID)
 	if err != nil {
@@ -608,14 +618,7 @@ func (s *PlaybookService) HandleTaskFailed(ctx context.Context, taskID pgtype.UU
 			return rebindErr
 		}
 	}
-	if _, err := s.Queries.MarkWorkflowNodeNeedsAttention(ctx, db.MarkWorkflowNodeNeedsAttentionParams{ID: node.ID, Error: reason}); err != nil {
-		return err
-	}
-	_, err = s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: node.WorkflowRunID, Status: "needs_attention"})
-	if err == nil {
-		s.projectStepIssueStatus(ctx, run, node, "blocked")
-	}
-	return err
+	return s.markPlaybookNeedsAttention(ctx, run, node, reason)
 }
 
 func (s *PlaybookService) advance(ctx context.Context, run db.WorkflowRun, definition PlaybookDefinition) error {
@@ -689,10 +692,7 @@ func (s *PlaybookService) advance(ctx context.Context, run db.WorkflowRun, defin
 		}
 	}
 	if allDone {
-		_, err = s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "succeeded"})
-		if err == nil {
-			s.projectRootIssueStatus(ctx, run, "in_review")
-		}
+		err = s.completePlaybookRun(ctx, run, definition)
 	}
 	return err
 }
@@ -748,11 +748,24 @@ func (s *PlaybookService) advanceStateMachine(ctx context.Context, run db.Workfl
 		return fmt.Errorf("persist playbook transition: %w", err)
 	}
 	if transition.End {
-		if _, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "succeeded"}); err != nil {
-			return err
-		}
-		s.projectRootIssueStatus(ctx, updatedRun, "in_review")
-		return nil
+		return s.completePlaybookRun(ctx, updatedRun, definition)
+	}
+	fromStep, _ := findPlaybookStep(definition, completed.StepKey)
+	toStep, _ := findPlaybookStep(definition, transition.To)
+	target := findNodeRun(mustListNodes(ctx, s.Queries, run.ID), transition.To)
+	transitionDetails := map[string]any{
+		"run_id":     util.UUIDToString(run.ID),
+		"sequence":   state.TransitionCount,
+		"from_step":  completed.StepKey,
+		"from_title": fromStep.Title,
+		"to_step":    transition.To,
+		"to_title":   toStep.Title,
+		"attempt":    target.Attempt + 1,
+	}
+	if playbookStepIndex(definition, transition.To) <= playbookStepIndex(definition, completed.StepKey) {
+		s.recordPlaybookActivity(ctx, updatedRun, "workflow_returned", transitionDetails)
+	} else {
+		s.recordPlaybookActivity(ctx, updatedRun, "workflow_advanced", transitionDetails)
 	}
 	return s.activateStateStep(ctx, updatedRun, definition, transition.To)
 }
@@ -792,12 +805,236 @@ func (s *PlaybookService) activateStateStep(ctx context.Context, run db.Workflow
 }
 
 func (s *PlaybookService) stopStateMachine(ctx context.Context, run db.WorkflowRun, node db.WorkflowNodeRun, reason string) error {
+	return s.markPlaybookNeedsAttention(ctx, run, node, reason)
+}
+
+func (s *PlaybookService) completePlaybookRun(ctx context.Context, run db.WorkflowRun, definition PlaybookDefinition) error {
+	completedRun, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "succeeded"})
+	if err != nil {
+		return err
+	}
+	s.projectRootIssueStatus(ctx, completedRun, "done")
+
+	nodes, err := s.Queries.ListWorkflowNodeRuns(ctx, run.ID)
+	if err != nil {
+		slog.Warn("playbook: load nodes for completion summary failed", "run_id", run.ID, "error", err)
+		nodes = nil
+	}
+	transitionCount, path := playbookRunPath(completedRun.Context)
+	retryCount := playbookRetryCount(nodes)
+	duration := playbookDuration(completedRun)
+	s.recordPlaybookActivity(ctx, completedRun, "workflow_run_completed", map[string]any{
+		"run_id":           util.UUIDToString(run.ID),
+		"transition_count": transitionCount,
+		"retry_count":      retryCount,
+		"duration_seconds": int(duration.Seconds()),
+	})
+
+	if path == "" {
+		completed := make([]string, 0, len(nodes))
+		for _, node := range nodes {
+			if step, ok := findPlaybookStep(definition, node.StepKey); ok && (node.Status == "succeeded" || node.Status == "skipped") {
+				completed = append(completed, step.Title)
+			}
+		}
+		path = strings.Join(completed, " → ")
+	}
+	content := fmt.Sprintf(
+		"## Playbook run completed\n\n- **Result:** succeeded\n- **Path:** %s\n- **Transitions:** %d\n- **Retries:** %d\n- **Duration:** %s\n\nThe root issue is complete.",
+		emptyFallback(path, "No recorded transitions"), transitionCount, retryCount, formatPlaybookDuration(duration),
+	)
+	s.postPlaybookSystemComment(ctx, completedRun, content)
+	return nil
+}
+
+func (s *PlaybookService) markPlaybookNeedsAttention(ctx context.Context, run db.WorkflowRun, node db.WorkflowNodeRun, reason string) error {
+	alreadyRecorded := run.Status == "needs_attention" && node.Status == "needs_attention" && node.Error == reason
 	if node.ID.Valid {
-		_, _ = s.Queries.MarkWorkflowNodeNeedsAttention(ctx, db.MarkWorkflowNodeNeedsAttentionParams{ID: node.ID, Error: reason})
+		if _, err := s.Queries.MarkWorkflowNodeNeedsAttention(ctx, db.MarkWorkflowNodeNeedsAttentionParams{ID: node.ID, Error: reason}); err != nil {
+			return err
+		}
 		s.projectStepIssueStatus(ctx, run, node, "blocked")
 	}
-	_, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "needs_attention"})
-	return err
+	updatedRun, err := s.Queries.UpdateWorkflowRunStatus(ctx, db.UpdateWorkflowRunStatusParams{ID: run.ID, Status: "needs_attention"})
+	if err != nil {
+		return err
+	}
+	s.projectRootIssueStatus(ctx, updatedRun, "blocked")
+	if alreadyRecorded {
+		return nil
+	}
+
+	stepTitle := node.StepKey
+	maxAttempts := defaultMaxAttempts
+	if definition, decodeErr := DecodePlaybookDefinition(run.DefinitionSnapshot); decodeErr == nil {
+		if step, ok := findPlaybookStep(definition, node.StepKey); ok {
+			stepTitle = step.Title
+			if step.MaxAttempts > 0 {
+				maxAttempts = step.MaxAttempts
+			}
+		}
+	}
+	s.recordPlaybookActivity(ctx, updatedRun, "workflow_needs_attention", map[string]any{
+		"run_id":     util.UUIDToString(run.ID),
+		"step_key":   node.StepKey,
+		"step_title": stepTitle,
+		"attempt":    node.Attempt,
+		"reason":     reason,
+	})
+	_, path := playbookRunPath(updatedRun.Context)
+	content := fmt.Sprintf(
+		"## Playbook run needs attention\n\n- **Current step:** %s (`%s`)\n- **Attempt:** %d / %d\n- **Reason:** %s\n- **Path so far:** %s\n\nResolve the issue, then retry this step to continue the run.",
+		stepTitle, node.StepKey, node.Attempt, maxAttempts, reason, emptyFallback(path, "No completed transition"),
+	)
+	s.postPlaybookSystemComment(ctx, updatedRun, content)
+	return nil
+}
+
+func (s *PlaybookService) recordPlaybookActivity(ctx context.Context, run db.WorkflowRun, action string, details map[string]any) {
+	raw, err := json.Marshal(details)
+	if err != nil {
+		return
+	}
+	activity, err := s.Queries.CreateActivity(ctx, db.CreateActivityParams{
+		WorkspaceID: run.WorkspaceID,
+		IssueID:     run.RootIssueID,
+		ActorType:   pgtype.Text{String: "system", Valid: true},
+		ActorID:     pgtype.UUID{Valid: false},
+		Action:      action,
+		Details:     raw,
+	})
+	if err != nil {
+		slog.Warn("playbook: create activity failed", "run_id", run.ID, "action", action, "error", err)
+		return
+	}
+	if s.IssueService == nil || s.IssueService.Bus == nil {
+		return
+	}
+	s.IssueService.Bus.Publish(events.Event{
+		Type:        protocol.EventActivityCreated,
+		WorkspaceID: util.UUIDToString(run.WorkspaceID),
+		ActorType:   "system",
+		ActorID:     "",
+		Payload: map[string]any{
+			"issue_id": util.UUIDToString(run.RootIssueID),
+			"entry": map[string]any{
+				"type":       "activity",
+				"id":         util.UUIDToString(activity.ID),
+				"actor_type": "system",
+				"actor_id":   "",
+				"action":     activity.Action,
+				"details":    json.RawMessage(raw),
+				"created_at": activity.CreatedAt.Time.Format(time.RFC3339),
+			},
+		},
+	})
+}
+
+func (s *PlaybookService) postPlaybookSystemComment(ctx context.Context, run db.WorkflowRun, content string) {
+	issue, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: run.RootIssueID, WorkspaceID: run.WorkspaceID})
+	if err != nil {
+		return
+	}
+	comment, err := s.Queries.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		AuthorType:  "system",
+		AuthorID:    pgtype.UUID{Valid: true},
+		Content:     content,
+		Type:        "system",
+		ParentID:    pgtype.UUID{Valid: false},
+	})
+	if err != nil {
+		slog.Warn("playbook: create system comment failed", "run_id", run.ID, "error", err)
+		return
+	}
+	if s.IssueService == nil || s.IssueService.Bus == nil {
+		return
+	}
+	s.IssueService.Bus.Publish(events.Event{
+		Type:        protocol.EventCommentCreated,
+		WorkspaceID: util.UUIDToString(run.WorkspaceID),
+		ActorType:   "system",
+		ActorID:     "",
+		Payload: map[string]any{
+			"comment": map[string]any{
+				"id":          util.UUIDToString(comment.ID),
+				"issue_id":    util.UUIDToString(comment.IssueID),
+				"author_type": comment.AuthorType,
+				"author_id":   "",
+				"content":     comment.Content,
+				"type":        comment.Type,
+				"parent_id":   nil,
+				"created_at":  comment.CreatedAt.Time.Format(time.RFC3339),
+			},
+			"issue_title":  issue.Title,
+			"issue_status": issue.Status,
+		},
+	})
+}
+
+func playbookRetryCount(nodes []db.WorkflowNodeRun) int {
+	total := 0
+	for _, node := range nodes {
+		if node.Attempt > 1 {
+			total += int(node.Attempt - 1)
+		}
+	}
+	return total
+}
+
+func playbookStepIndex(definition PlaybookDefinition, key string) int {
+	for index, step := range definition.Steps {
+		if step.Key == key {
+			return index
+		}
+	}
+	return len(definition.Steps)
+}
+
+func playbookRunPath(raw []byte) (int, string) {
+	_, state, err := decodePlaybookRuntimeState(raw)
+	if err != nil || len(state.Trace) == 0 {
+		return 0, ""
+	}
+	parts := make([]string, 0, len(state.Trace)+1)
+	parts = append(parts, state.Trace[0].From)
+	for _, transition := range state.Trace {
+		if transition.End {
+			parts = append(parts, "END")
+		} else {
+			parts = append(parts, transition.To)
+		}
+	}
+	return state.TransitionCount, strings.Join(parts, " → ")
+}
+
+func playbookDuration(run db.WorkflowRun) time.Duration {
+	end := time.Now()
+	if run.CompletedAt.Valid {
+		end = run.CompletedAt.Time
+	}
+	if !run.CreatedAt.Valid || end.Before(run.CreatedAt.Time) {
+		return 0
+	}
+	return end.Sub(run.CreatedAt.Time)
+}
+
+func formatPlaybookDuration(duration time.Duration) string {
+	if duration < time.Minute {
+		return fmt.Sprintf("%ds", int(duration.Seconds()))
+	}
+	if duration < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(duration.Minutes()), int(duration.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh %dm", int(duration.Hours()), int(duration.Minutes())%60)
+}
+
+func emptyFallback(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func selectPlaybookTransition(definition PlaybookDefinition, completed db.WorkflowNodeRun) (PlaybookTransition, bool, error) {
@@ -853,10 +1090,13 @@ func (s *PlaybookService) projectRootIssueStatus(ctx context.Context, run db.Wor
 	if issue.Status == "done" || issue.Status == "cancelled" || issue.Status == target {
 		return
 	}
-	if target == "in_progress" && issue.Status != "backlog" && issue.Status != "todo" {
+	if target == "in_progress" && issue.Status != "backlog" && issue.Status != "todo" && issue.Status != "blocked" && issue.Status != "in_review" {
 		return
 	}
-	if target == "in_review" && issue.Status != "backlog" && issue.Status != "todo" && issue.Status != "in_progress" {
+	if target == "blocked" && issue.Status != "backlog" && issue.Status != "todo" && issue.Status != "in_progress" && issue.Status != "in_review" {
+		return
+	}
+	if target == "in_review" && issue.Status != "backlog" && issue.Status != "todo" && issue.Status != "in_progress" && issue.Status != "blocked" {
 		return
 	}
 	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
