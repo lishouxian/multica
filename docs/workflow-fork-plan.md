@@ -21,7 +21,13 @@ fork 的长期成本不是写代码,是每次同步上游时解冲突。所有�
 
 1. **只增不改(additive-only)**:所有新代码放新文件/新表/新包;对上游文件的修改压到个位数行(路由注册、goroutine 启动等一行级接线)。
 2. **轮询优先于挂钩(poll over hook)**:上游 RFC 里最贵的前置工程是"把 issue 状态写路径收敛到单一入口"(副作用分散在 handler 两处 + GitHub webhook 三条路径)。fork 版**直接不做**——引擎不挂进上游写路径,用 5–10 秒的 reconcile 轮询扫描活跃 run、读 issue 当前状态、推进图。内部规模(同时活跃 run 为个位数)下轮询无感,且零上游侵入。
-3. **复用而非新建执行层**:节点执行 = 现有 issue + task queue;节点输出 = 现有 issue metadata(`multica issue metadata set`);节点完成判定 = issue 到 `done`。不碰 `CompleteTask`,前期不加新 CLI 命令。
+3. **复用而非新建执行层**:节点执行 = 现有 issue + task queue;节点输出 = 现有 issue metadata(`multica issue metadata set`);节点完成判定 = issue 到 `done`。不碰 `CompleteTask`。
+
+**CLI 零修改保证**:multica CLI 一行不改,包括不新增子命令。两个交互点都走现成通道——
+
+- **节点输出**:`multica issue metadata set` 是上游已有命令(`cmd_issue_metadata.go`),我们只是调用,不是修改;
+- **agent 调 workflow API**(编排、发起 run):daemon 会向每个 agent 会话注入 task 级凭证 `MULTICA_TOKEN`(`daemon/types.go` AuthToken,MUL-3292),agent 直接 `curl -H "Authorization: Bearer $MULTICA_TOKEN"` 访问新增的 `/api/workflows/*` 端点即可;新 handler 接受 task token 认证是我们自己的新代码。内部部署 server 地址固定,直接写进 skill 文档。
+- 保底通道(可选):若某 runtime 里连 CLI 都不可用,引擎可改为从节点 issue 的最后一条 comment 解析 ` ```wf_output ` 围栏 JSON 块作为输出——纯引擎侧约定,同样零 CLI 依赖。v1 不启用,记录备查。
 
 ---
 
@@ -174,7 +180,7 @@ CREATE TABLE wf_run (
 ## 8. 编排:三档,先做前两档
 
 1. **手写 JSON**(第一周可用):`POST /api/workflows/definitions` 提交图定义,工程师照 §4 schema 写;
-2. **Agent 编排**(成本≈一份 skill 文档):builtin skill `multica-workflow-authoring` 教 agent JSON schema 与提交 API。chat 里对任意 agent 说"帮我编一个 bug 处理流程"→ agent 生成 JSON → 调 API 创建 → 回图链接,人看图确认;
+2. **Agent 编排**(成本≈一份 skill 文档):builtin skill `multica-workflow-authoring` 教 agent JSON schema 与提交 API(用 `curl + $MULTICA_TOKEN`,见 §1 CLI 零修改保证,不新增 CLI 子命令)。chat 里对任意 agent 说"帮我编一个 bug 处理流程"→ agent 生成 JSON → 调 API 创建 → 回图链接,人看图确认;
 3. **表单/画布编辑器**:fork 版明确不做。
 
 Run 的触发:v1 只做 API/手动(`POST /api/workflows/runs`,带入口 context)。定时/webhook 触发复用 autopilot 的思路留到 v2(或直接让 autopilot `run_only` 任务里的 agent 调 run API,零开发)。
@@ -192,7 +198,7 @@ Run 的触发:v1 只做 API/手动(`POST /api/workflows/runs`,带入口 context)
 | Run Banner / inbox 卡投影 | 不做,workflow 页为唯一观察面 | 避免改 issues/inbox 现有组件 |
 | Pause/Eject 完整决策表 | 只做 `stop` | 决策表大部分格子内部用不到 |
 | CEL 表达式 | `eq/in/exists/default` 四种 JSON 条件 | 覆盖内部场景,50 行实现 |
-| 新 CLI 命令 | 前期不加,I/O 走现有 metadata 命令 | 零上游 CLI 改动 |
+| 新 CLI 命令 | **永不加**:输出走现有 metadata 命令,API 调用走 `curl + $MULTICA_TOKEN` | CLI 零修改是硬约束(§1) |
 
 ---
 
