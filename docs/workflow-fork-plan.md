@@ -124,7 +124,7 @@ CREATE TABLE wf_run (
 
 约定:
 
-- **节点**:`key`(图内唯一)、`title`、`executor`(`agent` | `human`,将来加 `program` 是纯增量)、`assignee`、`prompt`(支持 `{{run.context.*}}` 与 `{{nodes.<key>.output.*}}` 插值)、`outputs`(声明输出字段,供下游引用与 UI 展示)。
+- **节点**:`key`(图内唯一)、`title`、`executor`(`agent` | `human`,将来加 `program` 是纯增量)、`assignee`、`prompt`(支持 `{{run.context.*}}` 与 `{{nodes.<key>.output.*}}` 插值)、`outputs`(声明输出字段,供下游引用与 UI 展示;**每个字段是标量**,落地为 issue metadata 的 `wf_out.<field>` 键,见 §5)。
 - **边即条件**:`when` 是极简 JSON 条件——`eq` / `in` / `exists` / `default` 四种,不引入 CEL;一个 ~50 行的 Go 求值函数覆盖。多条出边按声明顺序求值,`default` 兜底;无边命中且无 default → 该分支自然终止。
 - **join(多入边)**:一个节点的全部入边来源节点都到达终态且至少一条边条件满足时激活。v1 语义即 `all_succeeded`(与上游 RFC §2.8.1 对齐);上游 issue 被 cancel 时 run 标 `failed` 并通知发起人,不带病推进。
 - **环**:创建/更新 definition 时 DFS 校验拒环。v1 不支持循环节点,打回重做用"新边指回原节点 + 次数上限"留到 v2。
@@ -133,8 +133,15 @@ CREATE TABLE wf_run (
 
 ## 5. 节点 I/O:全部复用现有机制,零上游改动
 
-- **输入**:引擎创建节点 issue 时,把插值后的 prompt 写进 issue description——agent 打开 issue 即见完整上下文;
-- **输出**:agent 用**现有的** `multica issue metadata set --key wf_output --value '{"severity":"high","module":"auth"}'` 写结构化输出;引擎轮询时从 issue metadata 读回,存入 `node_state`;
+- **输入**:引擎创建节点 issue 时,把插值后的 prompt 写进 issue description——agent 打开 issue 即见完整上下文,**输入不占用 metadata**;
+- **输出**:上游 metadata 的硬约束是**值只能是标量**(string/number/bool,对象/数组被 handler 400 拒绝)、每 issue ≤50 键、blob ≤8KB(`handler/issue_metadata.go`)。因此输出采用**扁平化前缀键**(key 规则允许点号):
+
+  ```bash
+  multica issue metadata set <issue-id> --key wf_out.severity --value high
+  multica issue metadata set <issue-id> --key wf_out.module --value auth
+  ```
+
+  节点声明的每个 `outputs` 字段对应一个 `wf_out.<field>` 键;引擎轮询时收集 `wf_out.*` 前缀键写入 `node_state`。**约束即设计原则:输出是路由信号,不是数据载荷**——驱动边条件和下游插值的小标量走 metadata;大产物(报告、代码、日志)留在 issue comment 和 PR 里,下游通过 issue 链接查看。确需传结构化大对象时用下述保底通道;
 - **教会 agent**:新增一个 builtin skill 文档(`multica-workflow-fork`),内容一页:什么时候写 `wf_output`、schema 是什么、完成后标 done。skill 目录是纯增量文件,不改上游 skill;
 - **human 节点**:指派给人的 issue,人看完点 done 即放行;需要"审批意见"时同样写 metadata。
 
