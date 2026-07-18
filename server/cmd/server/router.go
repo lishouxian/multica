@@ -1164,6 +1164,27 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Workflows (feat/workflow-v0)
+			r.Route("/api/workflows", func(r chi.Router) {
+				r.Get("/", h.ListWorkflows)
+				r.Post("/", h.PushWorkflow)
+				r.Post("/validate", h.ValidateWorkflow)
+				r.Get("/runs", h.ListWorkflowRuns)
+				r.Route("/runs/{issueId}", func(r chi.Router) {
+					r.Get("/", h.GetWorkflowRun)
+					r.Post("/pause", h.PauseWorkflowRun)
+					r.Post("/resume", h.ResumeWorkflowRun)
+					r.Post("/cancel", h.CancelWorkflowRun)
+					r.Post("/eject", h.EjectWorkflowRun)
+					r.Post("/retry", h.RetryWorkflowStep)
+				})
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetWorkflow)
+					r.Delete("/", h.ArchiveWorkflow)
+					r.Post("/run", h.RunWorkflow)
+				})
+			})
+
 			// Pins
 			r.Route("/api/pins", func(r chi.Router) {
 				r.Get("/", h.ListPins)
