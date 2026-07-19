@@ -1,14 +1,25 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { CheckCircle2, CircleDashed, LoaderCircle, XCircle } from "lucide-react";
+import { CheckCircle2, CircleDashed, LoaderCircle, RotateCcw, XCircle } from "lucide-react";
 import { workflowRunOptions } from "@multica/core/workflows/queries";
 import { useWorkflowRunControl } from "@multica/core/workflows";
 import type { WorkflowRun, WorkflowRunStep } from "@multica/core/workflows";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { cn } from "@multica/ui/lib/utils";
 import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
@@ -45,16 +56,27 @@ function WorkflowRunBannerBody({ run }: { run: WorkflowRun }) {
   const paths = useWorkspacePaths();
   const nav = useNavigation();
   const control = useWorkflowRunControl();
+  const [confirmCancel, setConfirmCancel] = useState(false);
 
   const isActive = run.status === "running" || run.status === "paused";
+  const cancellable = isActive || run.status === "needs_attention" || run.status === "ejected";
   const stagesTotal = new Set(run.steps.map((s) => s.stage)).size;
   const currentStage =
     run.steps.find((s) => s.active)?.stage ??
     (run.status === "done" ? stagesTotal : 0);
+  // Steps whose latest attempt failed/was rejected: the retry targets when
+  // the run is parked in needs_attention.
+  const failedSteps = run.steps.filter((step) => {
+    const latest = step.attempts[step.attempts.length - 1];
+    return latest?.issue_status === "cancelled";
+  });
 
-  async function act(action: "pause" | "resume" | "cancel" | "eject") {
+  async function act(
+    action: "pause" | "resume" | "cancel" | "eject" | "retry",
+    step?: string,
+  ) {
     try {
-      await control.mutateAsync({ rootIssueId: run.root_issue_id, action });
+      await control.mutateAsync({ rootIssueId: run.root_issue_id, action, step });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t(($) => $.toast.control_failed));
     }
@@ -91,6 +113,17 @@ function WorkflowRunBannerBody({ run }: { run: WorkflowRun }) {
               {t(($) => $.banner.eject)}
             </Button>
           ) : null}
+          {cancellable ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+              disabled={control.isPending}
+              onClick={() => setConfirmCancel(true)}
+            >
+              {t(($) => $.banner.cancel)}
+            </Button>
+          ) : null}
         </div>
       </div>
 
@@ -110,6 +143,46 @@ function WorkflowRunBannerBody({ run }: { run: WorkflowRun }) {
           />
         ))}
       </div>
+
+      {/* Recovery: a parked run offers a fresh attempt per failed step. */}
+      {run.status === "needs_attention" && failedSteps.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          {failedSteps.map((step) => (
+            <Button
+              key={step.key}
+              size="sm"
+              variant="outline"
+              disabled={control.isPending}
+              onClick={() => act("retry", step.key)}
+            >
+              <RotateCcw className="size-3.5" aria-hidden />
+              {t(($) => $.banner.retry_step, { key: step.key })}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
+      <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t(($) => $.banner.cancel_confirm_title)}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(($) => $.banner.cancel_confirm_description)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t(($) => $.banner.cancel_confirm_keep)}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmCancel(false);
+                void act("cancel");
+              }}
+            >
+              {t(($) => $.banner.cancel_confirm_confirm)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

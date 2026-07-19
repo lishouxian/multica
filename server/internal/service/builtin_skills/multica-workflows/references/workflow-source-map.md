@@ -11,6 +11,7 @@ same PR as any behavior change (CLAUDE.md rule).
 | Approval Done=approve / Cancelled=reject, reject reason = approver's last comment | `server/internal/service/workflow.go` (`snapshotSteps`) + `workflow_advance.go` (`workflowStepOutcome`) |
 | Run state storage (root issue metadata `workflow_state`, string-encoded JSON) | `server/internal/service/workflow.go` (`saveRunState`, `ParseWorkflowRunState`) |
 | Engine drive model (30s reconcile tick, poll-only) | `server/cmd/server/workflow_tick.go` |
-| CLI commands and flags | `server/cmd/multica/cmd_workflow.go` |
 | HTTP surface | `server/internal/handler/workflow.go`, routes in `server/cmd/server/router.go` |
+| OpenAPI document served at /api/workflows/openapi.yaml | `server/internal/handler/workflow_openapi.yaml` (embedded by `workflow_openapi.go`) |
+| Workflows page, YAML editor, run banner controls (pause/resume/cancel/eject/retry) | `packages/views/workflows/components/` |
 | Run statuses (`running`/`paused`/`needs_attention`/`ejected`/`done`/`cancelled`) | `server/internal/service/workflow_advance.go` (constants) |

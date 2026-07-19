@@ -338,7 +338,7 @@ func (s *WorkflowService) escalate(ctx context.Context, root db.Issue, def *Work
 	if def != nil {
 		s.refreshProgress(ctx, root, def, state)
 	}
-	s.postRunComment(ctx, root, fmt.Sprintf("⚠️ Workflow **%s** needs attention: %s\n\nFix the underlying issue, then resume the run (`multica workflow resume %s`).",
+	s.postRunComment(ctx, root, fmt.Sprintf("⚠️ Workflow **%s** needs attention: %s\n\nFix the underlying issue, then resume or retry the failed step from this issue's run banner (or via `POST /api/workflows/runs/%s/resume`).",
 		state.Workflow, reason, util.UUIDToString(root.ID)))
 	return nil
 }

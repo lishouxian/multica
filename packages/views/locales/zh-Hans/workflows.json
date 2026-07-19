@@ -44,7 +44,12 @@
     "resume": "恢复",
     "cancel": "取消运行",
     "eject": "弹出",
-    "reason": "原因"
+    "reason": "原因",
+    "retry_step": "重试 {{key}}",
+    "cancel_confirm_title": "取消这次运行？",
+    "cancel_confirm_description": "运行将永久停止，未完成的步骤 issue 会一并取消。已完成的工作会保留。",
+    "cancel_confirm_keep": "继续运行",
+    "cancel_confirm_confirm": "取消运行"
   },
   "toast": {
     "run_started": "运行已开始",

@@ -44,7 +44,12 @@
     "resume": "Resume",
     "cancel": "Cancel run",
     "eject": "Eject",
-    "reason": "Reason"
+    "reason": "Reason",
+    "retry_step": "Retry {{key}}",
+    "cancel_confirm_title": "Cancel this run?",
+    "cancel_confirm_description": "The run stops permanently and its open step issues are cancelled with it. Completed work is kept.",
+    "cancel_confirm_keep": "Keep running",
+    "cancel_confirm_confirm": "Cancel run"
   },
   "toast": {
     "run_started": "Run started",

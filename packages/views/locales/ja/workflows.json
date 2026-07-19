@@ -44,7 +44,12 @@
     "resume": "再開",
     "cancel": "実行を中止",
     "eject": "取り外し",
-    "reason": "理由"
+    "reason": "理由",
+    "retry_step": "{{key}} を再試行",
+    "cancel_confirm_title": "この実行をキャンセルしますか？",
+    "cancel_confirm_description": "実行は完全に停止し、未完了のステップ issue も一緒にキャンセルされます。完了済みの作業は保持されます。",
+    "cancel_confirm_keep": "実行を続ける",
+    "cancel_confirm_confirm": "実行をキャンセル"
   },
   "toast": {
     "run_started": "実行を開始しました",

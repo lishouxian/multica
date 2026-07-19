@@ -44,7 +44,12 @@
     "resume": "재개",
     "cancel": "실행 취소",
     "eject": "분리",
-    "reason": "사유"
+    "reason": "사유",
+    "retry_step": "{{key}} 재시도",
+    "cancel_confirm_title": "이 실행을 취소할까요?",
+    "cancel_confirm_description": "실행이 영구적으로 중지되며 미완료 단계 issue도 함께 취소됩니다. 완료된 작업은 유지됩니다.",
+    "cancel_confirm_keep": "계속 실행",
+    "cancel_confirm_confirm": "실행 취소"
   },
   "toast": {
     "run_started": "실행이 시작되었습니다",
