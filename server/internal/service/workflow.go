@@ -156,13 +156,33 @@ func (s *WorkflowService) StartRun(ctx context.Context, defRow db.WorkflowDefini
 	unlock := s.lockRun(root.ID)
 	defer unlock()
 
+	// Any failure past this point must not leave an orphan root behind: the
+	// root was just created for this run, so cancel it (with a comment naming
+	// the cause) before surfacing the error.
+	abort := func(cause error) (db.Issue, error) {
+		// Partial materialization may already have created step issues (state
+		// records every attempt as it is created); cancel those too.
+		for _, st := range state.Steps {
+			for _, attempt := range st.Attempts {
+				if issueID, perr := util.ParseUUID(attempt.IssueID); perr == nil {
+					if issue, gerr := s.Queries.GetIssue(ctx, issueID); gerr == nil {
+						s.setIssueStatus(ctx, issue, "cancelled")
+					}
+				}
+			}
+		}
+		s.postRunComment(ctx, root, fmt.Sprintf("🛑 Run failed to start: %v. This root issue was cancelled.", cause))
+		s.setIssueStatus(ctx, root, "cancelled")
+		return root, cause
+	}
+
 	first := def.Stages()[0]
 	if err := s.materializeSteps(ctx, root, def, state, stageKeys(def, first), ""); err != nil {
-		return root, err
+		return abort(err)
 	}
 	state.Frontier = stageKeys(def, first)
 	if err := s.saveRunState(ctx, root.ID, root.WorkspaceID, state); err != nil {
-		return root, err
+		return abort(err)
 	}
 	s.refreshProgress(ctx, root, def, state)
 	s.postRunComment(ctx, root, fmt.Sprintf("▶ Workflow **%s** started (def %s). Stage %d activated: %s.",
@@ -725,13 +745,11 @@ func (s *WorkflowService) buildStepDescription(root db.Issue, def *WorkflowDef, 
 	}
 	if len(step.Outputs) > 0 {
 		b.WriteString("\n## Required outputs\n\nWhen you finish, record each output on THIS issue before setting it to done:\n\n")
-		identifier := fmt.Sprintf("%s-%d", prefix, 0) // placeholder; replaced below with real number at create time
-		_ = identifier
 		for name, enum := range step.Outputs {
 			if len(enum) > 0 {
-				b.WriteString(fmt.Sprintf("- `multica issue metadata set <this-issue-id> %s --value \"<%s>\"`\n", name, strings.Join(enum, "|")))
+				b.WriteString(fmt.Sprintf("- `multica issue metadata set <this-issue-id> --key %s --value \"<%s>\"`\n", name, strings.Join(enum, "|")))
 			} else {
-				b.WriteString(fmt.Sprintf("- `multica issue metadata set <this-issue-id> %s --value \"...\"`\n", name))
+				b.WriteString(fmt.Sprintf("- `multica issue metadata set <this-issue-id> --key %s --value \"...\"`\n", name))
 			}
 		}
 		b.WriteString("\nThe workflow engine routes on these values; a missing or off-enum value takes the default branch.\n")

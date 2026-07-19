@@ -35,7 +35,7 @@ If either is present, the rules below apply.
    instructed:
 
    ```bash
-   multica issue metadata set <this-issue-id> <output-key> --value "<enum-value>"
+   multica issue metadata set <this-issue-id> --key <output-key> --value "<enum-value>"
    ```
 
    The engine routes on these values. A missing or off-enum value does not
