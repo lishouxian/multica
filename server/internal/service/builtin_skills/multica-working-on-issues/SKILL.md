@@ -245,6 +245,13 @@ Read each sub-issue's description before promoting and only promote items whose
 stated dependencies are met; if a description conflicts with the parent's
 breakdown, leave it `backlog` and comment to confirm first.
 
+**Exception — engine-managed workflow trees.** If the parent issue carries a
+`workflow_state` metadata key, or a sub-issue's description footer says
+"transitions are engine-managed", the tree belongs to a workflow run: the
+workflow engine promotes stages, creates rework attempts, and routes on step
+outputs. Do NOT manually promote, create, or close sub-issues there — do your
+own step and set it to done/cancelled only. See the multica-workflows skill.
+
 ## Incorrect → correct
 
 PR title (link the issue):

@@ -134,6 +134,14 @@ never cancels tasks now. `CancelTasksForIssue` fires only from the issue-deletio
 paths (`DeleteIssue` / `BatchDeleteIssues`), where the owning issue row is going
 away, so no task is left orphaned.
 
+## Engine-managed workflow trees (exception to manual promote)
+
+| Claim | Source |
+| --- | --- |
+| `workflow_state` metadata key marks a run root; the engine owns transitions on that tree | `server/internal/service/workflow.go` (`saveRunState`, `ReconcileRun`) |
+| Step issues carry a `workflow` metadata key and an "engine-managed" description footer | `server/internal/service/workflow.go` (`materializeSteps`, `buildStepDescription`) |
+| Manual promote on such trees double-activates steps | `server/internal/service/workflow_advance.go` (`AdvanceWorkflow` assumes the frontier is the only live attempt set) |
+
 ## Sub-issue stages (barrier wake)
 
 | Behavior | File:line |
