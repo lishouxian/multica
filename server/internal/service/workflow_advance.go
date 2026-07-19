@@ -29,20 +29,27 @@ const (
 )
 
 type WorkflowRunState struct {
-	Version      int                           `json:"v"`
-	Workflow     string                        `json:"workflow"`
-	DefinitionID string                        `json:"definition_id,omitempty"`
-	DefSHA       string                        `json:"def_sha"`
-	DefSource    string                        `json:"def_source"`
-	Status       string                        `json:"status"`
-	StatusReason string                        `json:"status_reason,omitempty"`
-	Vars         map[string]string             `json:"vars,omitempty"`
-	InitiatorID  string                        `json:"initiator_id"`
-	Frontier     []string                      `json:"frontier"`
-	Steps        map[string]*WorkflowStepState `json:"steps"`
-	StartedAt    time.Time                     `json:"started_at"`
-	Deadline     *time.Time                    `json:"deadline,omitempty"`
-	UpdatedAt    time.Time                     `json:"updated_at"`
+	Version      int               `json:"v"`
+	Workflow     string            `json:"workflow"`
+	DefinitionID string            `json:"definition_id,omitempty"`
+	DefSHA       string            `json:"def_sha"`
+	DefSource    string            `json:"def_source"`
+	Status       string            `json:"status"`
+	StatusReason string            `json:"status_reason,omitempty"`
+	Vars         map[string]string `json:"vars,omitempty"`
+	InitiatorID  string            `json:"initiator_id"`
+	Frontier     []string          `json:"frontier"`
+	// Activations counts materialization rounds. The Nth activation stamps
+	// its step issues with issue.stage=N, so the sub-issue tree reads as the
+	// execution timeline: a loop-back rework appears where it actually
+	// happened instead of being folded back into its template stage. The
+	// template stage lives in each child's workflow metadata and in the run
+	// state; the engine itself never reads issue.stage.
+	Activations int                           `json:"activations,omitempty"`
+	Steps       map[string]*WorkflowStepState `json:"steps"`
+	StartedAt   time.Time                     `json:"started_at"`
+	Deadline    *time.Time                    `json:"deadline,omitempty"`
+	UpdatedAt   time.Time                     `json:"updated_at"`
 }
 
 type WorkflowStepState struct {

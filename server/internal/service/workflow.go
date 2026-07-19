@@ -606,6 +606,8 @@ func (s *WorkflowService) createIssue(ctx context.Context, in createIssueInput) 
 }
 
 // materializeSteps creates a fresh attempt issue for every listed step key.
+// Each call is one activation round; the round ordinal becomes the child
+// issues' stage so the tree lays out chronologically.
 func (s *WorkflowService) materializeSteps(ctx context.Context, root db.Issue, def *WorkflowDef, state *WorkflowRunState, keys []string, rejectReason string) error {
 	scope := s.buildScope(ctx, root, def, state, rejectReason)
 	initiatorID, err := util.ParseUUID(state.InitiatorID)
@@ -613,6 +615,8 @@ func (s *WorkflowService) materializeSteps(ctx context.Context, root db.Issue, d
 		return fmt.Errorf("bad initiator id in run state: %w", err)
 	}
 	prefix := s.issuePrefix(root.WorkspaceID)
+	state.Activations++
+	round := state.Activations
 
 	for _, key := range keys {
 		step := def.Step(key)
@@ -670,12 +674,13 @@ func (s *WorkflowService) materializeSteps(ctx context.Context, root db.Issue, d
 			assigneeID:   assigneeID,
 			creatorID:    initiatorID,
 			parentID:     root.ID,
-			stage:        step.Stage,
+			stage:        round,
 			originID:     root.ID,
 			childMeta: map[string]any{
-				"run_root": util.UUIDToString(root.ID),
-				"step":     key,
-				"attempt":  n,
+				"run_root":       util.UUIDToString(root.ID),
+				"step":           key,
+				"attempt":        n,
+				"template_stage": step.Stage,
 			},
 		})
 		if err != nil {
