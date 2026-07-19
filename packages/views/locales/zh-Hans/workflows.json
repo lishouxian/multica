@@ -9,7 +9,8 @@
     "empty": "还没有剧本。用 `multica workflow push <file.yaml>` 推送一个。",
     "steps": "{{count}} 个步骤",
     "run": "运行",
-    "archive": "归档"
+    "archive": "归档",
+    "create": "新建剧本"
   },
   "runs": {
     "empty": "还没有运行。从剧本发起一次运行。",
@@ -59,6 +60,21 @@
     "copied": "已复制",
     "copy_failed": "复制失败",
     "loading": "加载中…",
-    "close": "关闭"
+    "close": "关闭",
+    "edit": "编辑"
+  },
+  "editor": {
+    "create_title": "新建剧本",
+    "edit_title": "编辑 {{name}}",
+    "description": "用 YAML 编写剧本。保存前「校验」会检查结构与路由。",
+    "rename_hint": "保存按 YAML 的 `name` 字段更新——改名会创建新剧本，而不是替换当前剧本。",
+    "validate": "校验",
+    "checking": "校验中…",
+    "valid": "校验通过：{{name}}，{{count}} 个步骤。",
+    "save": "保存",
+    "saving": "保存中…",
+    "saved": "剧本已保存",
+    "save_failed": "剧本保存失败",
+    "cancel": "取消"
   }
 }

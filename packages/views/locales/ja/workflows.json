@@ -9,7 +9,8 @@
     "empty": "プレイブックはまだありません。`multica workflow push <file.yaml>` で追加してください。",
     "steps": "{{count}} ステップ",
     "run": "実行",
-    "archive": "アーカイブ"
+    "archive": "アーカイブ",
+    "create": "新規プレイブック"
   },
   "runs": {
     "empty": "実行はまだありません。プレイブックから開始してください。",
@@ -59,6 +60,21 @@
     "copied": "コピーしました",
     "copy_failed": "コピーに失敗しました",
     "loading": "読み込み中…",
-    "close": "閉じる"
+    "close": "閉じる",
+    "edit": "編集"
+  },
+  "editor": {
+    "create_title": "新規プレイブック",
+    "edit_title": "{{name}} を編集",
+    "description": "プレイブックを YAML で記述します。保存前に「検証」で構造とルーティングを確認できます。",
+    "rename_hint": "保存は YAML の `name` をキーに上書きします。名前を変えると置き換えではなく新しいプレイブックが作成されます。",
+    "validate": "検証",
+    "checking": "検証中…",
+    "valid": "有効: {{name}}、{{count}} ステップ。",
+    "save": "保存",
+    "saving": "保存中…",
+    "saved": "プレイブックを保存しました",
+    "save_failed": "プレイブックの保存に失敗しました",
+    "cancel": "キャンセル"
   }
 }

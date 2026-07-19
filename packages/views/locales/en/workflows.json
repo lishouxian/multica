@@ -9,7 +9,8 @@
     "empty": "No playbooks yet. Push one with `multica workflow push <file.yaml>`.",
     "steps": "{{count}} steps",
     "run": "Run",
-    "archive": "Archive"
+    "archive": "Archive",
+    "create": "New playbook"
   },
   "runs": {
     "empty": "No runs yet. Start one from a playbook.",
@@ -59,6 +60,21 @@
     "copied": "Copied",
     "copy_failed": "Copy failed",
     "loading": "Loading…",
-    "close": "Close"
+    "close": "Close",
+    "edit": "Edit"
+  },
+  "editor": {
+    "create_title": "New playbook",
+    "edit_title": "Edit {{name}}",
+    "description": "Write the playbook as YAML. Validate checks structure and routing before you save.",
+    "rename_hint": "Saving upserts by the YAML `name` — renaming creates a new playbook instead of replacing this one.",
+    "validate": "Validate",
+    "checking": "Validating…",
+    "valid": "Valid: {{name}}, {{count}} steps.",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Playbook saved",
+    "save_failed": "Failed to save playbook",
+    "cancel": "Cancel"
   }
 }

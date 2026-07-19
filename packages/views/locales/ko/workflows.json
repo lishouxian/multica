@@ -9,7 +9,8 @@
     "empty": "아직 플레이북이 없습니다. `multica workflow push <file.yaml>`로 추가하세요.",
     "steps": "{{count}}개 단계",
     "run": "실행",
-    "archive": "보관"
+    "archive": "보관",
+    "create": "새 플레이북"
   },
   "runs": {
     "empty": "아직 실행이 없습니다. 플레이북에서 시작하세요.",
@@ -59,6 +60,21 @@
     "copied": "복사됨",
     "copy_failed": "복사 실패",
     "loading": "불러오는 중…",
-    "close": "닫기"
+    "close": "닫기",
+    "edit": "편집"
+  },
+  "editor": {
+    "create_title": "새 플레이북",
+    "edit_title": "{{name}} 편집",
+    "description": "플레이북을 YAML로 작성합니다. 저장 전 ‘검증’으로 구조와 라우팅을 확인하세요.",
+    "rename_hint": "저장은 YAML의 `name`을 키로 업서트합니다. 이름을 바꾸면 교체가 아니라 새 플레이북이 생성됩니다.",
+    "validate": "검증",
+    "checking": "검증 중…",
+    "valid": "유효함: {{name}}, {{count}}단계.",
+    "save": "저장",
+    "saving": "저장 중…",
+    "saved": "플레이북이 저장되었습니다",
+    "save_failed": "플레이북 저장에 실패했습니다",
+    "cancel": "취소"
   }
 }

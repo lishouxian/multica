@@ -1,0 +1,345 @@
+openapi: 3.1.0
+info:
+  title: Multica Workflow API
+  version: "0.1.0"
+  description: |
+    Workflow playbooks compiled into staged issue trees (feat/workflow-v0).
+
+    A **definition** is a YAML playbook (steps grouped into ordered stages;
+    steps sharing a stage run in parallel). A **run** materializes the
+    playbook as a sub-issue tree under a run-root issue; the engine promotes
+    stages, routes on step outputs, loops back on rejected approvals, and
+    escalates failures to a human. Runs are keyed by their root issue id.
+
+    All endpoints require a bearer token plus the `X-Workspace-ID` header
+    selecting the workspace.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/workflows:
+    get:
+      summary: List workflow definitions
+      parameters: [{ $ref: "#/components/parameters/WorkspaceID" }]
+      responses:
+        "200":
+          description: Definitions in the workspace.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  workflows:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkflowDefinition" }
+    post:
+      summary: Push (upsert) a definition
+      description: >
+        Validates the YAML source and upserts by its YAML-declared `name`.
+        Renaming therefore creates a new definition.
+      parameters: [{ $ref: "#/components/parameters/WorkspaceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkflowSource" }
+      responses:
+        "200":
+          description: The stored definition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkflowDefinition" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /api/workflows/validate:
+    post:
+      summary: Validate YAML without saving
+      parameters: [{ $ref: "#/components/parameters/WorkspaceID" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WorkflowSource" }
+      responses:
+        "200":
+          description: Validation verdict (always 200; check `valid`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  error: { type: string }
+                  name: { type: string }
+                  steps:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkflowStepInfo" }
+  /api/workflows/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/WorkspaceID" }
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      summary: Get a definition (including YAML source)
+      responses:
+        "200":
+          description: The definition.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkflowDefinition" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      summary: Archive a definition
+      description: Soft delete; historic runs keep their pinned source.
+      responses:
+        "200":
+          description: Archived.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  archived: { type: boolean }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/workflows/{id}/run:
+    post:
+      summary: Start a run
+      description: >
+        Creates the run-root issue (assigned to the caller), pins the
+        definition source into the run state, and activates the first stage.
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceID" }
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                vars:
+                  type: object
+                  additionalProperties: { type: string }
+                  description: Values for every var the playbook declares.
+      responses:
+        "200":
+          description: The started run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkflowRun" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/workflows/runs:
+    get:
+      summary: List runs
+      parameters: [{ $ref: "#/components/parameters/WorkspaceID" }]
+      responses:
+        "200":
+          description: Runs in the workspace, newest first (max 100).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items: { $ref: "#/components/schemas/WorkflowRun" }
+  /api/workflows/runs/{issueId}:
+    get:
+      summary: Get a run by its root issue id
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceID" }
+        - { $ref: "#/components/parameters/RunRootIssueID" }
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkflowRun" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/workflows/runs/{issueId}/pause:
+    post:
+      summary: Pause a run
+      description: In-flight steps finish; nothing new starts until resume.
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceID" }
+        - { $ref: "#/components/parameters/RunRootIssueID" }
+      responses:
+        "200": { $ref: "#/components/responses/RunUpdated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/workflows/runs/{issueId}/resume:
+    post:
+      summary: Resume a paused or needs_attention run
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceID" }
+        - { $ref: "#/components/parameters/RunRootIssueID" }
+      responses:
+        "200": { $ref: "#/components/responses/RunUpdated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/workflows/runs/{issueId}/cancel:
+    post:
+      summary: Cancel a run and its open step issues
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceID" }
+        - { $ref: "#/components/parameters/RunRootIssueID" }
+      responses:
+        "200": { $ref: "#/components/responses/RunUpdated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/workflows/runs/{issueId}/eject:
+    post:
+      summary: Eject — the engine detaches, the issue tree stays manual
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceID" }
+        - { $ref: "#/components/parameters/RunRootIssueID" }
+      responses:
+        "200": { $ref: "#/components/responses/RunUpdated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+  /api/workflows/runs/{issueId}/retry:
+    post:
+      summary: Materialize a fresh attempt for one step
+      description: Valid from running or needs_attention; the run returns to running.
+      parameters:
+        - { $ref: "#/components/parameters/WorkspaceID" }
+        - { $ref: "#/components/parameters/RunRootIssueID" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [step]
+              properties:
+                step: { type: string, description: Step key to retry. }
+      responses:
+        "200": { $ref: "#/components/responses/RunUpdated" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    WorkspaceID:
+      name: X-Workspace-ID
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+      description: Workspace the request operates in.
+    RunRootIssueID:
+      name: issueId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: The run's root issue id.
+  responses:
+    RunUpdated:
+      description: The run after the control operation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/WorkflowRun" }
+    BadRequest:
+      description: Invalid input.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Not found in this workspace.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: The run is not in a state that allows this operation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+    WorkflowSource:
+      type: object
+      required: [source]
+      properties:
+        source:
+          type: string
+          description: Playbook YAML. See the multica-workflows skill for the schema.
+    WorkflowStepInfo:
+      type: object
+      properties:
+        key: { type: string }
+        stage: { type: integer }
+        type:
+          type: string
+          description: '"" = work step, "approval" = human gate.'
+        assignee: { type: string }
+        title: { type: string }
+    WorkflowDefinition:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        source: { type: string }
+        vars:
+          type: array
+          items: { type: string }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/WorkflowStepInfo" }
+        created_by: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    WorkflowRunAttempt:
+      type: object
+      properties:
+        issue_id: { type: string, format: uuid }
+        identifier: { type: string, description: Human-readable issue key, e.g. WFL-3. }
+        n: { type: integer }
+        issue_status: { type: string }
+        created_at: { type: string, format: date-time }
+    WorkflowRunStep:
+      type: object
+      properties:
+        key: { type: string }
+        stage: { type: integer }
+        type: { type: string }
+        assignee: { type: string }
+        active: { type: boolean }
+        loops_used: { type: integer }
+        attempts:
+          type: array
+          items: { $ref: "#/components/schemas/WorkflowRunAttempt" }
+    WorkflowRun:
+      type: object
+      properties:
+        root_issue_id: { type: string, format: uuid }
+        root_identifier: { type: string }
+        root_title: { type: string }
+        workflow: { type: string }
+        definition_id: { type: string, format: uuid }
+        def_sha: { type: string }
+        status:
+          type: string
+          description: >
+            Server-driven enum; clients must default-branch on unknown values.
+            Known values: running, paused, needs_attention, ejected, done,
+            cancelled.
+        status_reason: { type: string }
+        vars:
+          type: object
+          additionalProperties: { type: string }
+        frontier:
+          type: array
+          items: { type: string }
+          description: Step keys currently awaited.
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/WorkflowRunStep" }
+        started_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }

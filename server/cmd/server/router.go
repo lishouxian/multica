@@ -732,6 +732,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
 
+	// Workflow API spec: a static, secret-free document served without auth
+	// so integrators can point OpenAPI tooling at a deployed instance.
+	r.Get("/api/workflows/openapi.yaml", h.WorkflowOpenAPISpec)
+
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace
 	// context is derived from the trigger row, never from request headers.

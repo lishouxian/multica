@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertCircle, Play, Workflow } from "lucide-react";
+import { AlertCircle, Play, Plus, Workflow } from "lucide-react";
 import {
   workflowListOptions,
   workflowRunsOptions,
@@ -28,6 +28,7 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import {
   CollectionPageHeader,
+  CollectionPageHeaderAction,
   CollectionPageState,
 } from "../../layout/collection-page";
 import { useNavigation } from "../../navigation";
@@ -35,6 +36,7 @@ import { useT } from "../../i18n";
 import { WorkflowStatusBadge } from "./workflow-status-badge";
 import { RunWorkflowDialog } from "./run-workflow-dialog";
 import { WorkflowDetailDialog } from "./workflow-detail-dialog";
+import { WorkflowEditorDialog } from "./workflow-editor-dialog";
 
 export function WorkflowsPage() {
   const { t } = useT("workflows");
@@ -47,6 +49,11 @@ export function WorkflowsPage() {
 
   const [runTarget, setRunTarget] = useState<WorkflowDefinition | null>(null);
   const [detailTarget, setDetailTarget] = useState<WorkflowDefinition | null>(null);
+  // Editor: closed | create | edit-with-source.
+  const [editor, setEditor] = useState<{ open: boolean; workflow: WorkflowDefinition | null }>({
+    open: false,
+    workflow: null,
+  });
 
   const activeRunsCount = useMemo(
     () => (runs.data ?? []).filter((r) => r.status === "running").length,
@@ -59,6 +66,13 @@ export function WorkflowsPage() {
         icon={Workflow}
         title={t(($) => $.title)}
         description={t(($) => $.subtitle)}
+        actions={
+          <CollectionPageHeaderAction
+            icon={Plus}
+            label={t(($) => $.definitions.create)}
+            onClick={() => setEditor({ open: true, workflow: null })}
+          />
+        }
       />
 
       <Tabs defaultValue="definitions" className="flex flex-1 min-h-0 flex-col">
@@ -97,6 +111,16 @@ export function WorkflowsPage() {
             <CollectionPageState
               icon={Workflow}
               title={t(($) => $.definitions.empty)}
+              actions={
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => setEditor({ open: true, workflow: null })}
+                >
+                  <Plus className="size-3.5" />
+                  {t(($) => $.definitions.create)}
+                </Button>
+              }
             />
           ) : (
             <Table>
@@ -206,6 +230,14 @@ export function WorkflowsPage() {
           if (!open) setDetailTarget(null);
         }}
         onRun={(wf) => setRunTarget(wf)}
+        onEdit={(wf) => setEditor({ open: true, workflow: wf })}
+      />
+      <WorkflowEditorDialog
+        workflow={editor.workflow}
+        open={editor.open}
+        onOpenChange={(open) => {
+          if (!open) setEditor({ open: false, workflow: null });
+        }}
       />
     </div>
   );

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Check, Copy, Play } from "lucide-react";
+import { Check, Copy, Pencil, Play } from "lucide-react";
 import { workflowDetailOptions } from "@multica/core/workflows/queries";
 import type { WorkflowDefinition } from "@multica/core/workflows";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -26,6 +26,7 @@ interface WorkflowDetailDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onRun?: (workflow: WorkflowDefinition) => void;
+  onEdit?: (workflow: WorkflowDefinition) => void;
 }
 
 export function WorkflowDetailDialog({
@@ -33,6 +34,7 @@ export function WorkflowDetailDialog({
   open,
   onOpenChange,
   onRun,
+  onEdit,
 }: WorkflowDetailDialogProps) {
   const { t } = useT("workflows");
   const wsId = useWorkspaceId();
@@ -136,6 +138,22 @@ export function WorkflowDetailDialog({
           >
             {t(($) => $.detail.close)}
           </Button>
+          {onEdit ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                onOpenChange(false);
+                // Hand the freshest source to the editor so an edit opened
+                // from a stale list row still starts from what the server has.
+                onEdit(def ?? workflow);
+              }}
+            >
+              <Pencil className="size-3.5" aria-hidden />
+              {t(($) => $.detail.edit)}
+            </Button>
+          ) : null}
           {onRun ? (
             <Button
               type="button"
