@@ -1,21 +1,21 @@
 {
   "title": "Workflows",
-  "subtitle": "Reusable playbooks that run as staged issue trees.",
+  "subtitle": "Reusable templates that run as staged issue trees.",
   "tabs": {
-    "definitions": "Playbooks",
+    "definitions": "Templates",
     "runs": "Runs"
   },
   "definitions": {
-    "empty": "No playbooks yet. Push one with `multica workflow push <file.yaml>`.",
+    "empty": "No templates yet. Create one with New template.",
     "steps": "{{count}} steps",
     "run": "Run",
     "archive": "Archive",
-    "create": "New playbook"
+    "create": "New template"
   },
   "runs": {
-    "empty": "No runs yet. Start one from a playbook.",
+    "empty": "No run instances yet. Start one from a template.",
     "col_run": "Run",
-    "col_workflow": "Playbook",
+    "col_workflow": "Template",
     "col_status": "Status",
     "col_stage": "Current step",
     "col_started": "Started"
@@ -30,8 +30,8 @@
   },
   "run_dialog": {
     "title": "Run {{name}}",
-    "description": "Fill in the run variables, then start. A run creates an issue tree the engine drives.",
-    "no_vars": "This playbook takes no variables.",
+    "description": "Fill in the run variables, then start. Starting creates a run instance the engine drives as an issue tree.",
+    "no_vars": "This template takes no variables.",
     "start": "Start run",
     "starting": "Starting…",
     "cancel": "Cancel"
@@ -57,7 +57,7 @@
     "control_failed": "Action failed"
   },
   "detail": {
-    "description": "Playbook definition — steps and YAML source.",
+    "description": "Template definition — steps and YAML source.",
     "steps": "Steps",
     "approval": "approval",
     "source": "YAML source",
@@ -69,17 +69,17 @@
     "edit": "Edit"
   },
   "editor": {
-    "create_title": "New playbook",
+    "create_title": "New template",
     "edit_title": "Edit {{name}}",
-    "description": "Write the playbook as YAML. Validate checks structure and routing before you save.",
-    "rename_hint": "Saving upserts by the YAML `name` — renaming creates a new playbook instead of replacing this one.",
+    "description": "Write the template as YAML. Validate checks structure and routing before you save.",
+    "rename_hint": "Saving upserts by the YAML `name` — renaming creates a new template instead of replacing this one.",
     "validate": "Validate",
     "checking": "Validating…",
     "valid": "Valid: {{name}}, {{count}} steps.",
     "save": "Save",
     "saving": "Saving…",
-    "saved": "Playbook saved",
-    "save_failed": "Failed to save playbook",
+    "saved": "Template saved",
+    "save_failed": "Failed to save template",
     "cancel": "Cancel"
   }
 }

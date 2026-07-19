@@ -1,21 +1,21 @@
 {
   "title": "ワークフロー",
-  "subtitle": "段階的な課題ツリーとして実行される再利用可能なプレイブック。",
+  "subtitle": "段階化された issue ツリーとして実行される、再利用可能なテンプレート。",
   "tabs": {
-    "definitions": "プレイブック",
-    "runs": "実行"
+    "definitions": "テンプレート",
+    "runs": "実行インスタンス"
   },
   "definitions": {
-    "empty": "プレイブックはまだありません。`multica workflow push <file.yaml>` で追加してください。",
+    "empty": "テンプレートがまだありません。「新規テンプレート」から作成してください。",
     "steps": "{{count}} ステップ",
     "run": "実行",
     "archive": "アーカイブ",
-    "create": "新規プレイブック"
+    "create": "新規テンプレート"
   },
   "runs": {
-    "empty": "実行はまだありません。プレイブックから開始してください。",
-    "col_run": "実行",
-    "col_workflow": "プレイブック",
+    "empty": "実行インスタンスがまだありません。テンプレートから実行を開始してください。",
+    "col_run": "実行インスタンス",
+    "col_workflow": "テンプレート",
     "col_status": "ステータス",
     "col_stage": "現在のステップ",
     "col_started": "開始"
@@ -30,8 +30,8 @@
   },
   "run_dialog": {
     "title": "{{name}} を実行",
-    "description": "実行変数を入力して開始します。実行するとエンジンが駆動する課題ツリーが作成されます。",
-    "no_vars": "このプレイブックには変数がありません。",
+    "description": "実行変数を入力して開始します。開始するとエンジンが駆動する実行インスタンス（issue ツリー）が作成されます。",
+    "no_vars": "このテンプレートに変数はありません。",
     "start": "実行を開始",
     "starting": "開始中…",
     "cancel": "キャンセル"
@@ -57,7 +57,7 @@
     "control_failed": "操作に失敗しました"
   },
   "detail": {
-    "description": "プレイブック定義 — ステップと YAML ソース。",
+    "description": "テンプレート定義 — ステップと YAML ソース。",
     "steps": "ステップ",
     "approval": "承認",
     "source": "YAML ソース",
@@ -69,17 +69,17 @@
     "edit": "編集"
   },
   "editor": {
-    "create_title": "新規プレイブック",
+    "create_title": "新規テンプレート",
     "edit_title": "{{name}} を編集",
-    "description": "プレイブックを YAML で記述します。保存前に「検証」で構造とルーティングを確認できます。",
-    "rename_hint": "保存は YAML の `name` をキーに上書きします。名前を変えると置き換えではなく新しいプレイブックが作成されます。",
+    "description": "テンプレートを YAML で記述します。保存前に「検証」で構造とルーティングを確認できます。",
+    "rename_hint": "保存は YAML の `name` をキーに上書きします。名前を変えると置き換えではなく新しいテンプレートが作成されます。",
     "validate": "検証",
     "checking": "検証中…",
     "valid": "有効: {{name}}、{{count}} ステップ。",
     "save": "保存",
     "saving": "保存中…",
-    "saved": "プレイブックを保存しました",
-    "save_failed": "プレイブックの保存に失敗しました",
+    "saved": "テンプレートを保存しました",
+    "save_failed": "テンプレートの保存に失敗しました",
     "cancel": "キャンセル"
   }
 }

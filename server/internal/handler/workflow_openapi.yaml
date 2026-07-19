@@ -3,11 +3,11 @@ info:
   title: Multica Workflow API
   version: "0.1.0"
   description: |
-    Workflow playbooks compiled into staged issue trees (feat/workflow-v0).
+    Workflow templates compiled into staged issue trees (feat/workflow-v0).
 
-    A **definition** is a YAML playbook (steps grouped into ordered stages;
+    A **definition** is a YAML template (steps grouped into ordered stages;
     steps sharing a stage run in parallel). A **run** materializes the
-    playbook as a sub-issue tree under a run-root issue; the engine promotes
+    template as a sub-issue tree under a run-root issue; the engine promotes
     stages, routes on step outputs, loops back on rejected approvals, and
     escalates failures to a human. Runs are keyed by their root issue id.
 
@@ -125,7 +125,7 @@ paths:
                 vars:
                   type: object
                   additionalProperties: { type: string }
-                  description: Values for every var the playbook declares.
+                  description: Values for every var the template declares.
       responses:
         "200":
           description: The started run.
@@ -269,7 +269,7 @@ components:
       properties:
         source:
           type: string
-          description: Playbook YAML. See the multica-workflows skill for the schema.
+          description: Template YAML. See the multica-workflows skill for the schema.
     WorkflowStepInfo:
       type: object
       properties:

@@ -7,7 +7,7 @@ allowed-tools: Bash(multica *)
 
 # Multica Workflows
 
-A workflow compiles a YAML playbook into a staged issue tree. Steps sharing a
+A workflow compiles a YAML template into a staged issue tree. Steps sharing a
 stage run in parallel as sibling sub-issues; the **engine** — not you —
 promotes stages, routes on step outputs, loops back on rejected approvals,
 and escalates failures to a human.
@@ -39,12 +39,12 @@ If either is present, the rules below apply.
    ```
 
    The engine routes on these values. A missing or off-enum value does not
-   crash the run — it takes the playbook's default branch, which usually
+   crash the run — it takes the template's default branch, which usually
    means a human gets pulled in. Write the output; do not improvise new enum
    values.
 4. **If you cannot finish the step**, set the issue to `cancelled` and leave
    a comment explaining why. The engine treats cancelled as failure and
-   applies the playbook's retry/escalation policy. Do not leave the issue
+   applies the template's retry/escalation policy. Do not leave the issue
    parked in `in_progress` — that only burns the step timeout.
 5. Attempt issues are immutable history: a rework pass arrives as a NEW
    issue titled "... (attempt N)" with the rejection reason embedded. Work in
@@ -59,13 +59,13 @@ An approval issue says "Approval required" and is assigned to a member:
   the reason — the comment becomes the rework instruction for the loop-back
   pass.
 
-## Managing playbooks and runs (humans / integrations)
+## Managing templates and runs (humans / integrations)
 
-There are no workflow CLI commands. Playbooks and runs are managed in two
+There are no workflow CLI commands. Templates and runs are managed in two
 places:
 
 - **Workflows page** in the app (`/{workspace}/workflows`): create/edit
-  playbooks in the YAML editor (with validate), start runs, and inspect
+  templates in the YAML editor (with validate), start runs, and inspect
   them. The run root issue's banner carries the controls — pause, resume,
   cancel (with its open step issues), eject, and per-step retry when a run
   is parked in `needs_attention`.
@@ -83,7 +83,7 @@ Control semantics:
 - `retry` (with a `step` key): materializes a fresh attempt for one step
   and points the run at it.
 
-## Playbook YAML in one glance
+## Template YAML in one glance
 
 ```yaml
 name: release-flow

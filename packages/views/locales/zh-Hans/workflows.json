@@ -1,21 +1,21 @@
 {
   "title": "工作流",
-  "subtitle": "可复用的剧本，以分阶段的 issue 树运行。",
+  "subtitle": "可复用的流程模板，以分阶段的 issue 树运行。",
   "tabs": {
-    "definitions": "剧本",
-    "runs": "运行"
+    "definitions": "模板",
+    "runs": "运行实例"
   },
   "definitions": {
-    "empty": "还没有剧本。用 `multica workflow push <file.yaml>` 推送一个。",
+    "empty": "还没有模板。点击「新建模板」创建一个。",
     "steps": "{{count}} 个步骤",
     "run": "运行",
     "archive": "归档",
-    "create": "新建剧本"
+    "create": "新建模板"
   },
   "runs": {
-    "empty": "还没有运行。从剧本发起一次运行。",
-    "col_run": "运行",
-    "col_workflow": "剧本",
+    "empty": "还没有运行实例。从模板发起运行。",
+    "col_run": "运行实例",
+    "col_workflow": "模板",
     "col_status": "状态",
     "col_stage": "当前步骤",
     "col_started": "开始时间"
@@ -30,8 +30,8 @@
   },
   "run_dialog": {
     "title": "运行 {{name}}",
-    "description": "填写运行变量后开始。一次运行会创建由引擎驱动的 issue 树。",
-    "no_vars": "该剧本无需变量。",
+    "description": "填写运行变量后开始。开始后会创建一个由引擎驱动的运行实例（issue 树）。",
+    "no_vars": "该模板无需变量。",
     "start": "开始运行",
     "starting": "正在开始…",
     "cancel": "取消"
@@ -57,7 +57,7 @@
     "control_failed": "操作失败"
   },
   "detail": {
-    "description": "剧本定义 —— 步骤与 YAML 源码。",
+    "description": "模板定义 —— 步骤与 YAML 源码。",
     "steps": "步骤",
     "approval": "审批",
     "source": "YAML 源码",
@@ -69,17 +69,17 @@
     "edit": "编辑"
   },
   "editor": {
-    "create_title": "新建剧本",
+    "create_title": "新建模板",
     "edit_title": "编辑 {{name}}",
-    "description": "用 YAML 编写剧本。保存前「校验」会检查结构与路由。",
-    "rename_hint": "保存按 YAML 的 `name` 字段更新——改名会创建新剧本，而不是替换当前剧本。",
+    "description": "用 YAML 编写模板。保存前「校验」会检查结构与路由。",
+    "rename_hint": "保存按 YAML 的 `name` 字段更新——改名会创建新模板，而不是替换当前模板。",
     "validate": "校验",
     "checking": "校验中…",
     "valid": "校验通过：{{name}}，{{count}} 个步骤。",
     "save": "保存",
     "saving": "保存中…",
-    "saved": "剧本已保存",
-    "save_failed": "剧本保存失败",
+    "saved": "模板已保存",
+    "save_failed": "模板保存失败",
     "cancel": "取消"
   }
 }

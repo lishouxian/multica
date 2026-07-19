@@ -1,21 +1,21 @@
 {
   "title": "워크플로우",
-  "subtitle": "단계별 이슈 트리로 실행되는 재사용 가능한 플레이북.",
+  "subtitle": "단계화된 issue 트리로 실행되는 재사용 가능한 템플릿.",
   "tabs": {
-    "definitions": "플레이북",
-    "runs": "실행"
+    "definitions": "템플릿",
+    "runs": "실행 인스턴스"
   },
   "definitions": {
-    "empty": "아직 플레이북이 없습니다. `multica workflow push <file.yaml>`로 추가하세요.",
+    "empty": "아직 템플릿이 없습니다. ‘새 템플릿’으로 만들어 보세요.",
     "steps": "{{count}}개 단계",
     "run": "실행",
     "archive": "보관",
-    "create": "새 플레이북"
+    "create": "새 템플릿"
   },
   "runs": {
-    "empty": "아직 실행이 없습니다. 플레이북에서 시작하세요.",
-    "col_run": "실행",
-    "col_workflow": "플레이북",
+    "empty": "아직 실행 인스턴스가 없습니다. 템플릿에서 실행을 시작하세요.",
+    "col_run": "실행 인스턴스",
+    "col_workflow": "템플릿",
     "col_status": "상태",
     "col_stage": "현재 단계",
     "col_started": "시작"
@@ -30,8 +30,8 @@
   },
   "run_dialog": {
     "title": "{{name}} 실행",
-    "description": "실행 변수를 입력한 후 시작하세요. 실행하면 엔진이 구동하는 이슈 트리가 생성됩니다.",
-    "no_vars": "이 플레이북에는 변수가 없습니다.",
+    "description": "실행 변수를 입력한 뒤 시작하세요. 시작하면 엔진이 구동하는 실행 인스턴스(issue 트리)가 생성됩니다.",
+    "no_vars": "이 템플릿에는 변수가 없습니다.",
     "start": "실행 시작",
     "starting": "시작 중…",
     "cancel": "취소"
@@ -57,7 +57,7 @@
     "control_failed": "작업에 실패했습니다"
   },
   "detail": {
-    "description": "플레이북 정의 — 단계와 YAML 소스.",
+    "description": "템플릿 정의 — 단계와 YAML 소스.",
     "steps": "단계",
     "approval": "승인",
     "source": "YAML 소스",
@@ -69,17 +69,17 @@
     "edit": "편집"
   },
   "editor": {
-    "create_title": "새 플레이북",
+    "create_title": "새 템플릿",
     "edit_title": "{{name}} 편집",
-    "description": "플레이북을 YAML로 작성합니다. 저장 전 ‘검증’으로 구조와 라우팅을 확인하세요.",
-    "rename_hint": "저장은 YAML의 `name`을 키로 업서트합니다. 이름을 바꾸면 교체가 아니라 새 플레이북이 생성됩니다.",
+    "description": "템플릿을 YAML로 작성합니다. 저장 전 ‘검증’으로 구조와 라우팅을 확인하세요.",
+    "rename_hint": "저장은 YAML의 `name`을 키로 업서트합니다. 이름을 바꾸면 교체가 아니라 새 템플릿이 생성됩니다.",
     "validate": "검증",
     "checking": "검증 중…",
     "valid": "유효함: {{name}}, {{count}}단계.",
     "save": "저장",
     "saving": "저장 중…",
-    "saved": "플레이북이 저장되었습니다",
-    "save_failed": "플레이북 저장에 실패했습니다",
+    "saved": "템플릿이 저장되었습니다",
+    "save_failed": "템플릿 저장에 실패했습니다",
     "cancel": "취소"
   }
 }
