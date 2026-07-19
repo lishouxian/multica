@@ -260,6 +260,20 @@ import {
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
 } from "./schemas";
+import {
+  WorkflowDefinitionSchema,
+  ListWorkflowsResponseSchema,
+  EMPTY_LIST_WORKFLOWS_RESPONSE,
+  ValidateWorkflowResponseSchema,
+  WorkflowRunSchema,
+  ListWorkflowRunsResponseSchema,
+  EMPTY_LIST_WORKFLOW_RUNS_RESPONSE,
+  type WorkflowDefinition,
+  type ListWorkflowsResponse,
+  type ValidateWorkflowResponse,
+  type WorkflowRun,
+  type ListWorkflowRunsResponse,
+} from "./workflow-schemas";
 
 /** Identifies the calling client to the server.
  *  Sent on every HTTP request as X-Client-Platform / X-Client-Version /
@@ -2569,6 +2583,86 @@ export class ApiClient {
       UNREADABLE_CRON_PREVIEW_RESPONSE,
       { endpoint: "GET /api/autopilots/cron-preview" },
     );
+  }
+
+  // Workflows (feat/workflow-v0). Definitions are YAML playbooks; runs are
+  // staged issue trees keyed by their root issue id. Every response is parsed
+  // through a lenient schema so a status/enum the client doesn't know about
+  // renders as-is instead of dropping the row.
+  async listWorkflows(): Promise<ListWorkflowsResponse> {
+    const raw = await this.fetch<unknown>("/api/workflows");
+    return parseWithFallback(raw, ListWorkflowsResponseSchema, EMPTY_LIST_WORKFLOWS_RESPONSE, {
+      endpoint: "GET /api/workflows",
+    });
+  }
+
+  async getWorkflow(id: string): Promise<WorkflowDefinition> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}`);
+    return parseWithFallback(raw, WorkflowDefinitionSchema, WorkflowDefinitionSchema.parse({}), {
+      endpoint: "GET /api/workflows/:id",
+    });
+  }
+
+  async pushWorkflow(source: string): Promise<WorkflowDefinition> {
+    const raw = await this.fetch<unknown>("/api/workflows", {
+      method: "POST",
+      body: JSON.stringify({ source }),
+    });
+    return parseWithFallback(raw, WorkflowDefinitionSchema, WorkflowDefinitionSchema.parse({}), {
+      endpoint: "POST /api/workflows",
+    });
+  }
+
+  async validateWorkflow(source: string): Promise<ValidateWorkflowResponse> {
+    const raw = await this.fetch<unknown>("/api/workflows/validate", {
+      method: "POST",
+      body: JSON.stringify({ source }),
+    });
+    return parseWithFallback(raw, ValidateWorkflowResponseSchema, ValidateWorkflowResponseSchema.parse({}), {
+      endpoint: "POST /api/workflows/validate",
+    });
+  }
+
+  async archiveWorkflow(id: string): Promise<void> {
+    await this.fetch(`/api/workflows/${id}`, { method: "DELETE" });
+  }
+
+  async runWorkflow(id: string, vars: Record<string, string>): Promise<WorkflowRun> {
+    const raw = await this.fetch<unknown>(`/api/workflows/${id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ vars }),
+    });
+    return parseWithFallback(raw, WorkflowRunSchema, WorkflowRunSchema.parse({}), {
+      endpoint: "POST /api/workflows/:id/run",
+    });
+  }
+
+  async listWorkflowRuns(): Promise<ListWorkflowRunsResponse> {
+    const raw = await this.fetch<unknown>("/api/workflows/runs");
+    return parseWithFallback(raw, ListWorkflowRunsResponseSchema, EMPTY_LIST_WORKFLOW_RUNS_RESPONSE, {
+      endpoint: "GET /api/workflows/runs",
+    });
+  }
+
+  async getWorkflowRun(rootIssueId: string): Promise<WorkflowRun> {
+    const raw = await this.fetch<unknown>(`/api/workflows/runs/${rootIssueId}`);
+    return parseWithFallback(raw, WorkflowRunSchema, WorkflowRunSchema.parse({}), {
+      endpoint: "GET /api/workflows/runs/:id",
+    });
+  }
+
+  async workflowRunControl(
+    rootIssueId: string,
+    action: "pause" | "resume" | "cancel" | "eject" | "retry",
+    body?: Record<string, unknown>,
+  ): Promise<WorkflowRun> {
+    const raw = await this.fetch<unknown>(`/api/workflows/runs/${rootIssueId}/${action}`, {
+      method: "POST",
+      body: JSON.stringify(body ?? {}),
+    });
+    return parseWithFallback(raw, WorkflowRunSchema, WorkflowRunSchema.parse({}), {
+      endpoint: `POST /api/workflows/runs/:id/${action}`,
+    });
   }
 
   async rotateAutopilotTriggerWebhookToken(

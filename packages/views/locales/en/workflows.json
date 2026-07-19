@@ -1,0 +1,53 @@
+{
+  "title": "Workflows",
+  "subtitle": "Reusable playbooks that run as staged issue trees.",
+  "tabs": {
+    "definitions": "Playbooks",
+    "runs": "Runs"
+  },
+  "definitions": {
+    "empty": "No playbooks yet. Push one with `multica workflow push <file.yaml>`.",
+    "steps": "{{count}} steps",
+    "run": "Run",
+    "archive": "Archive"
+  },
+  "runs": {
+    "empty": "No runs yet. Start one from a playbook.",
+    "col_run": "Run",
+    "col_workflow": "Playbook",
+    "col_status": "Status",
+    "col_stage": "Current step",
+    "col_started": "Started"
+  },
+  "status": {
+    "running": "Running",
+    "paused": "Paused",
+    "needs_attention": "Needs attention",
+    "ejected": "Ejected",
+    "done": "Done",
+    "cancelled": "Cancelled"
+  },
+  "run_dialog": {
+    "title": "Run {{name}}",
+    "description": "Fill in the run variables, then start. A run creates an issue tree the engine drives.",
+    "no_vars": "This playbook takes no variables.",
+    "start": "Start run",
+    "starting": "Starting…",
+    "cancel": "Cancel"
+  },
+  "banner": {
+    "title": "Workflow",
+    "step_of": "Step {{current}} of {{total}}",
+    "view_run": "View run",
+    "pause": "Pause",
+    "resume": "Resume",
+    "cancel": "Cancel run",
+    "eject": "Eject",
+    "reason": "Reason"
+  },
+  "toast": {
+    "run_started": "Run started",
+    "run_failed": "Could not start run",
+    "control_failed": "Action failed"
+  }
+}

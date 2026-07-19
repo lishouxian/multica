@@ -1,0 +1,53 @@
+{
+  "title": "ワークフロー",
+  "subtitle": "段階的な課題ツリーとして実行される再利用可能なプレイブック。",
+  "tabs": {
+    "definitions": "プレイブック",
+    "runs": "実行"
+  },
+  "definitions": {
+    "empty": "プレイブックはまだありません。`multica workflow push <file.yaml>` で追加してください。",
+    "steps": "{{count}} ステップ",
+    "run": "実行",
+    "archive": "アーカイブ"
+  },
+  "runs": {
+    "empty": "実行はまだありません。プレイブックから開始してください。",
+    "col_run": "実行",
+    "col_workflow": "プレイブック",
+    "col_status": "ステータス",
+    "col_stage": "現在のステップ",
+    "col_started": "開始"
+  },
+  "status": {
+    "running": "実行中",
+    "paused": "一時停止",
+    "needs_attention": "要対応",
+    "ejected": "取り外し済み",
+    "done": "完了",
+    "cancelled": "キャンセル"
+  },
+  "run_dialog": {
+    "title": "{{name}} を実行",
+    "description": "実行変数を入力して開始します。実行するとエンジンが駆動する課題ツリーが作成されます。",
+    "no_vars": "このプレイブックには変数がありません。",
+    "start": "実行を開始",
+    "starting": "開始中…",
+    "cancel": "キャンセル"
+  },
+  "banner": {
+    "title": "ワークフロー",
+    "step_of": "ステップ {{current}} / {{total}}",
+    "view_run": "実行を表示",
+    "pause": "一時停止",
+    "resume": "再開",
+    "cancel": "実行を中止",
+    "eject": "取り外し",
+    "reason": "理由"
+  },
+  "toast": {
+    "run_started": "実行を開始しました",
+    "run_failed": "実行を開始できませんでした",
+    "control_failed": "操作に失敗しました"
+  }
+}

@@ -54,6 +54,7 @@ import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { toast } from "sonner";
 import { StatusIcon, PriorityIcon, StatusPicker, PriorityPicker, StagePicker, StartDatePicker, DueDatePicker, AssigneePicker, LabelPicker } from ".";
 import { maxSiblingStage } from "./pickers/stage-picker";
+import { WorkflowRunBanner } from "../../workflows/components";
 import { CustomPropertyValueEditor } from "./pickers/custom-property-picker";
 import { IssueActionsDropdown, useIssueActions } from "../actions";
 import { ProjectPicker } from "../../projects/components/project-picker";
@@ -2093,6 +2094,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           className="relative flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
         >
         <div className="mx-auto w-full max-w-4xl px-8 py-8">
+          {/* Run banner: renders only when this issue is a workflow run root. */}
+          <div className="mb-4 empty:hidden">
+            <WorkflowRunBanner issueId={issue.id} metadata={issue.metadata} />
+          </div>
           {titleLazy.active && (
             <div className={titleLazy.ready ? undefined : "hidden"}>
               <TitleEditor

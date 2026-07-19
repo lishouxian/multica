@@ -1,0 +1,53 @@
+{
+  "title": "워크플로우",
+  "subtitle": "단계별 이슈 트리로 실행되는 재사용 가능한 플레이북.",
+  "tabs": {
+    "definitions": "플레이북",
+    "runs": "실행"
+  },
+  "definitions": {
+    "empty": "아직 플레이북이 없습니다. `multica workflow push <file.yaml>`로 추가하세요.",
+    "steps": "{{count}}개 단계",
+    "run": "실행",
+    "archive": "보관"
+  },
+  "runs": {
+    "empty": "아직 실행이 없습니다. 플레이북에서 시작하세요.",
+    "col_run": "실행",
+    "col_workflow": "플레이북",
+    "col_status": "상태",
+    "col_stage": "현재 단계",
+    "col_started": "시작"
+  },
+  "status": {
+    "running": "실행 중",
+    "paused": "일시정지",
+    "needs_attention": "확인 필요",
+    "ejected": "분리됨",
+    "done": "완료",
+    "cancelled": "취소됨"
+  },
+  "run_dialog": {
+    "title": "{{name}} 실행",
+    "description": "실행 변수를 입력한 후 시작하세요. 실행하면 엔진이 구동하는 이슈 트리가 생성됩니다.",
+    "no_vars": "이 플레이북에는 변수가 없습니다.",
+    "start": "실행 시작",
+    "starting": "시작 중…",
+    "cancel": "취소"
+  },
+  "banner": {
+    "title": "워크플로우",
+    "step_of": "{{total}}단계 중 {{current}}단계",
+    "view_run": "실행 보기",
+    "pause": "일시정지",
+    "resume": "재개",
+    "cancel": "실행 취소",
+    "eject": "분리",
+    "reason": "사유"
+  },
+  "toast": {
+    "run_started": "실행이 시작되었습니다",
+    "run_failed": "실행을 시작할 수 없습니다",
+    "control_failed": "작업에 실패했습니다"
+  }
+}

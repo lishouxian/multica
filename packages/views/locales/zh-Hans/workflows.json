@@ -1,0 +1,53 @@
+{
+  "title": "工作流",
+  "subtitle": "可复用的剧本，以分阶段的 issue 树运行。",
+  "tabs": {
+    "definitions": "剧本",
+    "runs": "运行"
+  },
+  "definitions": {
+    "empty": "还没有剧本。用 `multica workflow push <file.yaml>` 推送一个。",
+    "steps": "{{count}} 个步骤",
+    "run": "运行",
+    "archive": "归档"
+  },
+  "runs": {
+    "empty": "还没有运行。从剧本发起一次运行。",
+    "col_run": "运行",
+    "col_workflow": "剧本",
+    "col_status": "状态",
+    "col_stage": "当前步骤",
+    "col_started": "开始时间"
+  },
+  "status": {
+    "running": "运行中",
+    "paused": "已暂停",
+    "needs_attention": "待处理",
+    "ejected": "已弹出",
+    "done": "已完成",
+    "cancelled": "已取消"
+  },
+  "run_dialog": {
+    "title": "运行 {{name}}",
+    "description": "填写运行变量后开始。一次运行会创建由引擎驱动的 issue 树。",
+    "no_vars": "该剧本无需变量。",
+    "start": "开始运行",
+    "starting": "正在开始…",
+    "cancel": "取消"
+  },
+  "banner": {
+    "title": "工作流",
+    "step_of": "第 {{current}} / {{total}} 步",
+    "view_run": "查看运行",
+    "pause": "暂停",
+    "resume": "恢复",
+    "cancel": "取消运行",
+    "eject": "弹出",
+    "reason": "原因"
+  },
+  "toast": {
+    "run_started": "运行已开始",
+    "run_failed": "无法开始运行",
+    "control_failed": "操作失败"
+  }
+}

@@ -35,6 +35,7 @@ import {
   BarChart3,
   X,
   Zap,
+  Workflow,
   Users,
 } from "lucide-react";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
@@ -122,6 +123,7 @@ type NavKey =
   | "issues"
   | "projects"
   | "autopilots"
+  | "workflows"
   | "agents"
   | "squads"
   | "usage"
@@ -137,6 +139,7 @@ type NavLabelKey =
   | "issues"
   | "projects"
   | "autopilots"
+  | "workflows"
   | "agents"
   | "squads"
   | "usage"
@@ -154,6 +157,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
   { key: "issues", labelKey: "issues", icon: ListTodo },
   { key: "projects", labelKey: "projects", icon: FolderKanban },
   { key: "autopilots", labelKey: "autopilots", icon: Zap },
+  { key: "workflows", labelKey: "workflows", icon: Workflow },
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
   { key: "usage", labelKey: "usage", icon: BarChart3 },
