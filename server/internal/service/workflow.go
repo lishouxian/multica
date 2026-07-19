@@ -543,7 +543,14 @@ func (s *WorkflowService) createIssue(ctx context.Context, in createIssueInput) 
 		return db.Issue{}, fmt.Errorf("create issue: %w", err)
 	}
 	if len(in.childMeta) > 0 {
-		raw, _ := json.Marshal(in.childMeta)
+		// Store as a JSON *string* value, not a nested object: issue.metadata is
+		// a primitives-only KV on the API boundary (see the client's
+		// IssueMetadataSchema), so a nested object would make the whole issue
+		// fail schema parsing on older/stricter clients.
+		raw, err := jsonStringValue(in.childMeta)
+		if err != nil {
+			return db.Issue{}, fmt.Errorf("encode child metadata: %w", err)
+		}
 		issue, err = qtx.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
 			ID:          issue.ID,
 			WorkspaceID: in.workspaceID,
@@ -807,7 +814,11 @@ func ParseWorkflowRunState(metadata []byte) (*WorkflowRunState, error) {
 }
 
 func (s *WorkflowService) saveRunState(ctx context.Context, rootID, wsID pgtype.UUID, state *WorkflowRunState) error {
-	raw, err := json.Marshal(state)
+	// Stored as a JSON *string* value: issue.metadata is a primitives-only KV
+	// on the API boundary, so the run-state object is string-encoded to keep
+	// the run root issue parseable by every client. ParseWorkflowRunState
+	// accepts both the string and legacy object encodings.
+	raw, err := jsonStringValue(state)
 	if err != nil {
 		return err
 	}
@@ -818,6 +829,18 @@ func (s *WorkflowService) saveRunState(ctx context.Context, rootID, wsID pgtype.
 		Value:       raw,
 	})
 	return err
+}
+
+// jsonStringValue marshals v to JSON, then encodes that JSON as a JSON string
+// literal — the value written under an issue.metadata key so nested structures
+// survive as a single primitive string rather than an object the API's
+// primitives-only metadata schema would reject.
+func jsonStringValue(v any) ([]byte, error) {
+	inner, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(string(inner))
 }
 
 // refreshProgress rewrites the run root's description progress block — the
