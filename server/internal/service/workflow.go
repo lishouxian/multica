@@ -634,6 +634,23 @@ func (s *WorkflowService) materializeSteps(ctx context.Context, root db.Issue, d
 		}
 		n := len(st.Attempts) + 1
 
+		// A fresh attempt supersedes the previous one. If the old attempt is
+		// still open (typical for manual retry after a failed agent task),
+		// cancel it and its queued tasks so the tree never carries a stale
+		// live issue the engine no longer watches.
+		if prev := st.LatestAttempt(); prev != nil {
+			if prevID, perr := util.ParseUUID(prev.IssueID); perr == nil {
+				if prevIssue, gerr := s.Queries.GetIssue(ctx, prevID); gerr == nil &&
+					prevIssue.Status != "done" && prevIssue.Status != "cancelled" {
+					if err := s.TaskSvc.CancelTasksForIssue(ctx, prevIssue.ID); err != nil {
+						slog.Warn("workflow: cancel superseded attempt tasks failed",
+							"issue", prev.IssueID, "error", err)
+					}
+					s.setIssueStatus(ctx, prevIssue, "cancelled")
+				}
+			}
+		}
+
 		title := step.Title
 		if title == "" {
 			title = fmt.Sprintf("%s · %s", def.Name, key)
