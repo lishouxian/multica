@@ -34,6 +34,7 @@ import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { WorkflowStatusBadge } from "./workflow-status-badge";
 import { RunWorkflowDialog } from "./run-workflow-dialog";
+import { WorkflowDetailDialog } from "./workflow-detail-dialog";
 
 export function WorkflowsPage() {
   const { t } = useT("workflows");
@@ -45,6 +46,7 @@ export function WorkflowsPage() {
   const runs = useQuery(workflowRunsOptions(wsId));
 
   const [runTarget, setRunTarget] = useState<WorkflowDefinition | null>(null);
+  const [detailTarget, setDetailTarget] = useState<WorkflowDefinition | null>(null);
 
   const activeRunsCount = useMemo(
     () => (runs.data ?? []).filter((r) => r.status === "running").length,
@@ -107,7 +109,11 @@ export function WorkflowsPage() {
               </TableHeader>
               <TableBody>
                 {(definitions.data ?? []).map((wf) => (
-                  <TableRow key={wf.id}>
+                  <TableRow
+                    key={wf.id}
+                    className="cursor-pointer"
+                    onClick={() => setDetailTarget(wf)}
+                  >
                     <TableCell className="font-medium">{wf.name}</TableCell>
                     <TableCell className="text-muted-foreground">
                       {t(($) => $.definitions.steps, { count: wf.steps.length })}
@@ -117,7 +123,12 @@ export function WorkflowsPage() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => setRunTarget(wf)}
+                        onClick={(e) => {
+                          // Row click opens the detail dialog; keep Run its
+                          // own action.
+                          e.stopPropagation();
+                          setRunTarget(wf);
+                        }}
                       >
                         <Play className="size-3.5" />
                         {t(($) => $.definitions.run)}
@@ -187,6 +198,14 @@ export function WorkflowsPage() {
           if (!open) setRunTarget(null);
         }}
         onStarted={(rootIssueId) => nav.push(paths.issueDetail(rootIssueId))}
+      />
+      <WorkflowDetailDialog
+        workflow={detailTarget}
+        open={detailTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetailTarget(null);
+        }}
+        onRun={(wf) => setRunTarget(wf)}
       />
     </div>
   );

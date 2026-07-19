@@ -49,5 +49,16 @@
     "run_started": "Run started",
     "run_failed": "Could not start run",
     "control_failed": "Action failed"
+  },
+  "detail": {
+    "description": "Playbook definition — steps and YAML source.",
+    "steps": "Steps",
+    "approval": "approval",
+    "source": "YAML source",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copy_failed": "Copy failed",
+    "loading": "Loading…",
+    "close": "Close"
   }
 }

@@ -49,5 +49,16 @@
     "run_started": "运行已开始",
     "run_failed": "无法开始运行",
     "control_failed": "操作失败"
+  },
+  "detail": {
+    "description": "剧本定义 —— 步骤与 YAML 源码。",
+    "steps": "步骤",
+    "approval": "审批",
+    "source": "YAML 源码",
+    "copy": "复制",
+    "copied": "已复制",
+    "copy_failed": "复制失败",
+    "loading": "加载中…",
+    "close": "关闭"
   }
 }

@@ -49,5 +49,16 @@
     "run_started": "실행이 시작되었습니다",
     "run_failed": "실행을 시작할 수 없습니다",
     "control_failed": "작업에 실패했습니다"
+  },
+  "detail": {
+    "description": "플레이북 정의 — 단계와 YAML 소스.",
+    "steps": "단계",
+    "approval": "승인",
+    "source": "YAML 소스",
+    "copy": "복사",
+    "copied": "복사됨",
+    "copy_failed": "복사 실패",
+    "loading": "불러오는 중…",
+    "close": "닫기"
   }
 }

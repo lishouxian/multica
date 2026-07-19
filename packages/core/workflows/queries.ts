@@ -21,11 +21,15 @@ export function workflowListOptions(wsId: string) {
   });
 }
 
-export function workflowDetailOptions(wsId: string, id: string) {
+export function workflowDetailOptions(
+  wsId: string,
+  id: string,
+  options?: { enabled?: boolean },
+) {
   return queryOptions({
     queryKey: workflowKeys.detail(wsId, id),
     queryFn: () => api.getWorkflow(id),
-    enabled: id !== "",
+    enabled: (options?.enabled ?? true) && id !== "",
   });
 }
 
